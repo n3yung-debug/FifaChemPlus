@@ -103,11 +103,10 @@ a.ext{color:var(--acc);font-size:12px;text-decoration:none;margin-left:6px} a.ex
       <div id="gameNote"></div>
       <div class="sec">
         <div class="grid2">
-          <label class="f">Manager nation<select id="mNation"></select></label>
-          <label class="f">Manager league<select id="mLeague"></select></label>
+          <label class="f">Your manager's nation<select id="mNation"></select></label>
+          <label class="f">Your manager's league (right now)<select id="mLeague"></select></label>
         </div>
-        <label class="chk" style="margin-top:6px"><input type="checkbox" id="mFree" checked> I can change the manager's league (League Modifier item) — choose the best one for me</label>
-        <div class="small mut" style="margin-top:4px">The manager counts like one more player of their nation and league (no club), so they help everyone's links the same way a squad player does. The nation is fixed by the manager card; the league can be changed with an item.</div>
+        <div class="small mut" style="margin-top:4px">The manager counts like one more player of their nation and league (no club). Suggestions always consider switching the league with a League Modifier and tell you which one.</div>
         <div class="small" id="mInfo" style="margin-top:4px"></div>
       </div>
       <div class="sec">
@@ -209,7 +208,7 @@ let FORMATIONS = {};
 const $ = id => document.getElementById(id);
 const esc = s => String(s ?? "").replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
 let META = {nations:[],leagues:[],clubs:[],formations:[]};
-let S = {formation:DEFAULT_FORMATION, slots:[], squad:[], locks:[], mgr:{ni:null,li:null,li_free:true}, game:""};
+let S = {formation:DEFAULT_FORMATION, slots:[], squad:[], locks:[], mgr:{ni:null,li:null}, game:""};
 const leagueName = id => { const l = META.leagues.find(x => x[0]===id); return l ? l[1] : "league "+id; };
 const nationName = id => { const n = META.nations.find(x => x[0]===id); return n ? n[1] : "nation "+id; };
 let pickIdx = -1, lastEval = null, evalTimer = null, searchTimer = null, fillMode = false, hl = 0, VIS = [];
@@ -252,7 +251,7 @@ function load(){
       }
     }
     if(d && d.S && d.S.slots && d.S.slots.length===11){
-      S = Object.assign(S, d.S); S.mgr = Object.assign({ni:null,li:null,li_free:true}, S.mgr);
+      S = Object.assign(S, d.S); S.mgr = {ni:S.mgr ? S.mgr.ni ?? null : null, li:S.mgr ? S.mgr.li ?? null : null};
       if(d.opts) writeOpts(d.opts); return; }
   }catch(e){}
   setFormation(FORMATIONS[DEFAULT_FORMATION] ? DEFAULT_FORMATION : Object.keys(FORMATIONS)[0]);
@@ -364,9 +363,9 @@ function renderTotal(){
     else note.innerHTML = `<div class="note bad">Mismatch: the game shows ${esc(g)}, this tool computes ${t}. Check the manager nation/league, slot positions and any boosted-chemistry card. If everything is right, the chemistry rules may have changed — tell me and I'll re-check.</div>`;
   } else note.innerHTML = "";
   const mi = $("mInfo");
-  if(S.mgr.li_free && lastEval && lastEval.mgr_li != null)
-    mi.innerHTML = `Best manager league for this squad: <strong>${esc(leagueName(lastEval.mgr_li))}</strong> — apply a League Modifier for it.`;
-  else if(S.mgr.li_free && lastEval && full) mi.textContent = "No manager league would add chemistry here.";
+  if(lastEval && lastEval.best_total > lastEval.total && lastEval.best_li != null)
+    mi.innerHTML = `💡 A League Modifier to <strong>${esc(leagueName(lastEval.best_li))}</strong> would give <span class="chip pos">+${lastEval.best_total - lastEval.total}</span> → ${lastEval.best_total}/33. <button class="sm" id="useBestLi">Use it</button>`;
+  else if(lastEval && full) mi.textContent = "Your manager's league is already the best one for this squad.";
   else mi.textContent = "";
 }
 
@@ -478,10 +477,12 @@ function resultsBody(r){
   let h = "";
   if(VIEW === "plan"){
     if(!r.chain.length) return `<div class="mut small">No swap improves chemistry with the current locks and filters (try raising "max rating drop" or unlocking players).</div>`;
-    let run = r.base;
+    let run = r.base, li = r.li_cur;
     r.chain.forEach((st,k)=>{
       const d = st.total-run; run = st.total;
-      h += `<div class="res"><div style="flex:1"><div class="small mut">Step ${k+1}</div>${st.swaps.map(swapHtml).join("")}</div><div style="text-align:right">${chip(d)}<div class="small mut">→ ${st.total}/33</div></div></div>`;
+      const lm = st.li != null && st.li !== li ? `<div class="small" style="margin-top:3px">+ League Modifier → <b>${esc(leagueName(st.li))}</b></div>` : "";
+      li = st.li;
+      h += `<div class="res"><div style="flex:1"><div class="small mut">Step ${k+1}</div>${st.swaps.map(swapHtml).join("")}${lm}</div><div style="text-align:right">${chip(d)}<div class="small mut">→ ${st.total}/33</div></div></div>`;
     });
     h += `<button class="primary" id="applyChain">Apply whole plan (${r.base} → ${r.chain_total})</button>`;
     const ma = (r.mgr_suggest_after || []).slice(0,3);
@@ -491,7 +492,7 @@ function resultsBody(r){
   }
   if(VIEW === "mgr"){
     const ms = r.mgr_suggest || [];
-    h += `<div class="small mut">Current manager: ${S.mgr.ni==null?"no nation set":esc(nationName(S.mgr.ni))}${r.mgr_now && r.mgr_now.li!=null?` · ${esc(leagueName(r.mgr_now.li))}`:""} → ${r.base}/33.</div>`;
+    h += `<div class="small mut">Current manager: ${S.mgr.ni==null?"no nation set":esc(nationName(S.mgr.ni))} · ${S.mgr.li==null?"no league set":esc(leagueName(S.mgr.li))} → ${r.base}/33.</div>`;
     if(!ms.length) return h + `<div class="mut small">No manager change raises chemistry — your manager is already the best choice for this squad.</div>`;
     return h + ms.map((o,k)=>`<div class="res"><div style="flex:1">${mgrText(o)}</div><div style="text-align:right">${chip(o.d)}<div class="small mut">${o.total}/33</div><button class="sm" data-mgr="${k}">Apply</button></div></div>`).join("");
   }
@@ -500,16 +501,18 @@ function resultsBody(r){
   const list = C.by_k[k] || [];
   if(!list.length){
     const lower = Object.entries(C.by_k).filter(([kk,v]) => +kk < +k && v.length).map(([kk,v]) => [kk, v[0].total]);
-    return `<div class="mut small">No ${k}-player swap beats what fewer swaps already reach${lower.length?` (best: ${lower.map(([kk,t])=>`${kk} swap${kk==="1"?"":"s"} → ${t}/33`).join(", ")})`:""}${COMBO_MGR?"":", or try ticking “allow a manager change too”"}.</div>`;
+    return `<div class="mut small">No ${k}-player swap beats what fewer swaps already reach${lower.length?` (best: ${lower.map(([kk,t])=>`${kk} swap${kk==="1"?"":"s"} → ${t}/33`).join(", ")})`:""}${COMBO_MGR?"":", or try ticking “include a new manager”"}.</div>`;
   }
-  return list.map((c,j)=>`<div class="res"><div style="flex:1">${c.mgr?`<div class="small" style="margin-bottom:3px">${mgrText(c.mgr)}</div>`:""}${c.swaps.map(swapHtml).join("")}</div><div style="text-align:right">${chip(c.d)}<div class="small mut">${c.total}/33 · rating ${c.dr>=0?"+":""}${c.dr}</div><button class="sm" data-combo="${j}">Apply</button></div></div>`).join("");
+  const extra = c => [c.mgr ? `Manager from <b>${esc(c.mgr.nn || nationName(c.mgr.ni))}</b> <span class="mut">(new manager card)</span>` : "",
+                      c.league && c.li != null ? `League Modifier → <b>${esc(leagueName(c.li))}</b>` : ""].filter(Boolean).join(" + ");
+  return list.map((c,j)=>`<div class="res"><div style="flex:1">${extra(c)?`<div class="small" style="margin-bottom:3px">${extra(c)}</div>`:""}${c.swaps.map(swapHtml).join("")}</div><div style="text-align:right">${chip(c.d)}<div class="small mut">${c.total}/33 · rating ${c.dr>=0?"+":""}${c.dr}</div><button class="sm" data-combo="${j}">Apply</button></div></div>`).join("");
 }
 function viewOptions(r){
   const best = list => list && list.length ? ` (best +${list[0].d})` : "";
-  const C = COMBO_MGR && r.combosMgr ? r.combosMgr : r.combos;
+  const C = COMBO_MGR ? r.combosMgr : r.combos;
   let o = `<option value="plan">Best step-by-step plan${r.chain.length?` (+${r.chain_total-r.base})`:""}</option>`;
   o += `<option value="mgr">Manager change only${best(r.mgr_suggest)}</option>`;
-  if(C) for(const k of Object.keys(C.by_k)) o += `<option value="k${k}">${k}-player swap${k==="1"?"":"s"}${COMBO_MGR?" + manager":""}${best(C.by_k[k])}</option>`;
+  if(C) for(const k of Object.keys(C.by_k)) o += `<option value="k${k}">${k}-player swap${k==="1"?"":"s"}${COMBO_MGR?" + new manager":""}${best(C.by_k[k])}</option>`;
   return o;
 }
 function renderResults(r){
@@ -519,7 +522,7 @@ function renderResults(r){
   if(r.unmatched && r.unmatched.length) h += `<div class="note warn">Not found in the database: ${r.unmatched.map(esc).join(", ")}</div>`;
   h += `<div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin:12px 0 6px">
     <label class="f" style="flex-direction:row;align-items:center;gap:6px;font-size:13px;color:var(--txt)">Show <select id="resView">${viewOptions(r)}</select></label>
-    <label class="chk" ${VIEW.startsWith("k")?"":"hidden"}><input type="checkbox" id="comboMgr" ${COMBO_MGR?"checked":""}> allow a manager change too</label></div>`;
+    <label class="chk" ${VIEW.startsWith("k")?"":"hidden"}><input type="checkbox" id="comboMgr" ${COMBO_MGR?"checked":""}> include a new manager (different nation)</label></div>`;
   h += `<div id="resList">${resultsBody(r)}</div></div>`;
   $("results").innerHTML = h;
   $("resView").value = VIEW;
@@ -673,7 +676,7 @@ async function openShared(enc){
   S.squad = (d.p||[]).slice(0,11).map(x => !x ? null : typeof x === "string" ? (got.cards[x]||null) : x);
   while(S.squad.length<11) S.squad.push(null);
   S.locks = Array(11).fill(false); (d.l||[]).forEach(i => { if(i>=0 && i<11) S.locks[i] = true; });
-  if(d.m) S.mgr = Object.assign({ni:null,li:null,li_free:true}, d.m);
+  if(d.m) S.mgr = {ni:d.m.ni ?? null, li:d.m.li ?? null};
   syncMgrInputs(); $("formation").value = FORMATIONS[S.formation] ? S.formation : "";
   $("results").innerHTML = ""; refresh();
   $("syncMsg").textContent = got.missing.length ? `Shared squad loaded; ${got.missing.length} card(s) couldn't be found.` : "Shared squad loaded (Undo goes back to your previous squad).";
@@ -708,7 +711,6 @@ function fillSelect(sel, items, first){
 }
 function syncMgrInputs(){
   $("mNation").value = S.mgr.ni ?? ""; $("mLeague").value = S.mgr.li ?? "";
-  $("mFree").checked = !!S.mgr.li_free; $("mLeague").disabled = !!S.mgr.li_free;
 }
 let started = false;
 async function init(){
@@ -784,7 +786,7 @@ $("cAdd").onclick = () => {
 };
 $("mNation").onchange = e => { commit(); S.mgr.ni = e.target.value===""?null:+e.target.value; refresh(); };
 $("mLeague").onchange = e => { commit(); S.mgr.li = e.target.value===""?null:+e.target.value; refresh(); };
-$("mFree").onchange = e => { commit(); S.mgr.li_free = e.target.checked; $("mLeague").disabled = e.target.checked; refresh(); };
+$("mInfo").addEventListener("click", e => { if(e.target.id==="useBestLi" && lastEval){ commit(); S.mgr.li = lastEval.best_li; syncMgrInputs(); refresh(); } });
 $("impBtn").onclick = () => openImport("fgg");
 $("impClose").onclick = () => $("impDlg").close();
 $("gameTotal").oninput = e => { S.game = e.target.value; renderTotal(); save(); };
@@ -792,14 +794,21 @@ for(const id of ["maxDrop","minRating","gender","maxSteps","clubList","xIcon","x
 $("go").onclick = runOptimize;
 $("results").addEventListener("click", e => {
   const R = window.__R; if(!R) return;
-  if(e.target.id==="applyChain") return applySwaps(R.chain.flatMap(s=>s.swaps));
+  if(e.target.id==="applyChain"){
+    const last = R.chain[R.chain.length-1];
+    applySwaps(R.chain.flatMap(s=>s.swaps));
+    if(last && last.li != null && last.li !== S.mgr.li){ S.mgr.li = last.li; syncMgrInputs(); refresh(); }
+    return;
+  }
   const am = e.target.closest("[data-mgr]");
   if(am) return applyMgr(R.mgr_suggest[+am.dataset.mgr]);
   const ac = e.target.closest("[data-combo]");
   if(ac){
     const c = ((COMBO_MGR ? R.combosMgr : R.combos).by_k[VIEW.slice(1)] || [])[+ac.dataset.combo];
     commit(); c.swaps.forEach(s => S.squad[s.slot] = s.in);
-    if(c.mgr){ S.mgr.ni = c.mgr.ni; if(c.mgr.league) S.mgr.li = c.mgr.li; syncMgrInputs(); }
+    if(c.mgr) S.mgr.ni = c.mgr.ni;
+    if(c.league && c.li != null) S.mgr.li = c.li;
+    syncMgrInputs();
     $("results").innerHTML = ""; refresh();
   }
 });
@@ -810,15 +819,7 @@ function applyMgr(o){
 $("results").addEventListener("change", async e => {
   const R = window.__R; if(!R) return;
   if(e.target.id === "resView"){ VIEW = e.target.value; return renderResults(); }
-  if(e.target.id === "comboMgr"){
-    COMBO_MGR = e.target.checked; renderResults();
-    if(COMBO_MGR && !R.combosMgr){
-      try{
-        const c = await api("/api/combos", {slots:S.slots, squad:S.squad, locks:S.locks, mgr:S.mgr, opts:Object.assign(readOpts(), {combo_mgr:true})});
-        if(window.__R === R){ R.combosMgr = c; renderResults(); }
-      }catch(err){ $("resList").innerHTML = `<div class="note bad">${esc(err.message)}</div>`; }
-    }
-  }
+  if(e.target.id === "comboMgr"){ COMBO_MGR = e.target.checked; renderResults(); }
 });
 $("diag").onclick = async () => {
   $("syncMsg").textContent = "testing…";

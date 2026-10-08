@@ -734,11 +734,12 @@ class Handler(BaseHTTPRequestHandler):
         try:
             body = self._body()
             if self.path == "/api/evaluate":
-                return self._send(200, eng.evaluate(body["slots"], body["squad"], body.get("mgr")))
+                fixed, free = _mgr_modes(body.get("mgr"))
+                ev = eng.evaluate(body["slots"], body["squad"], fixed)
+                best = eng.evaluate(body["slots"], body["squad"], free)
+                return self._send(200, dict(ev, best_li=best["mgr_li"], best_total=best["total"]))
             if self.path == "/api/optimize":
                 return self._send(200, self.optimize(body))
-            if self.path == "/api/combos":
-                return self._send(200, self.combos(body))
             if self.path == "/api/import_preview":
                 mode = body.get("mode")
                 if mode == "fgg":
@@ -770,35 +771,33 @@ class Handler(BaseHTTPRequestHandler):
     def optimize(b):
         slots, squad, locks, mgr, o, by_pos, ok, budget, bad_prices, pool, unmatched = _search_setup(b)
         max_drop, min_rating = int(o.get("max_drop", 3)), int(o.get("min_rating", 0))
-        base, singles, allr = eng.top_singles(slots, squad, locks, mgr, by_pos, max_drop, min_rating, n=30, ok=ok)
-        pairs = []
-        if o.get("pairs", False):
-            pairs = eng.synergy_pairs(slots, squad, locks, mgr, by_pos, allr, base, max_drop, min_rating, n=15, ok=ok)
-        chain, chain_total, final = eng.plan_chain(slots, squad, locks, mgr, by_pos, max_drop, min_rating,
+        fixed, free = _mgr_modes(mgr)
+        base = eng.total_only(slots, squad, fixed)          # what the squad has right now
+        base_free, li_now = eng.total_only(slots, squad, free), eng._manager_rows(slots, squad, free)[1]
+        _, singles, _ = eng.top_singles(slots, squad, locks, free, by_pos, max_drop, min_rating, n=30, ok=ok)
+        chain, chain_total, final = eng.plan_chain(slots, squad, locks, free, by_pos, max_drop, min_rating,
                                                    max_steps=int(o.get("max_steps", 5)), ok=ok)
-        combos = Handler.combos(b, setup=(slots, squad, locks, mgr, o, by_pos, ok)) if o.get("combos", True) else None
-        return {"budget": budget.report() if budget else None, "bad_prices": bad_prices, "base": base,
-                "singles": singles, "pairs": pairs, "chain": chain, "combos": combos,
-                "chain_total": chain_total, "pool": len(pool), "unmatched": unmatched,
-                "mgr_now": {"li": eng.evaluate(slots, squad, mgr)["mgr_li"],
-                            **eng.manager_options(slots, squad, mgr)},
-                "mgr_after": {"li": eng.evaluate(slots, final, mgr)["mgr_li"],
-                              **eng.manager_options(slots, final, mgr)},
-                "mgr_suggest": eng.manager_suggestions(slots, squad, mgr, top=15),
-                "mgr_suggest_after": eng.manager_suggestions(slots, final, mgr)}
-
-    @staticmethod
-    def combos(b, setup=None):
-        """Best 1..K-player swap combos; with opts.combo_mgr also tries the best manager changes alongside."""
-        slots, squad, locks, mgr, o, by_pos, ok = setup or _search_setup(b)[:7]
+        cur = list(squad)
+        for st in chain:  # which manager league each step assumes (League Modifier)
+            for w in st["swaps"]:
+                cur[w["slot"]] = w["in"]
+            st["li"] = eng._manager_rows(slots, cur, free)[1]
         k_max = max(1, min(5, int(o.get("max_steps", 5))))
-        cfg = None
-        if o.get("combo_mgr"):
-            cfg = [{k: m[k] for k in ("ni", "nn", "li", "ln", "nation", "league")}
-                   for m in eng.manager_suggestions(slots, squad, mgr, top=3)]
-        res = eng.k_swap_combos(slots, squad, locks, mgr, by_pos, int(o.get("max_drop", 3)), int(o.get("min_rating", 0)),
-                                k_max=k_max, n=25, ok=ok, mgr_configs=cfg)
-        return {"with_mgr": bool(o.get("combo_mgr")), "k_max": k_max, "by_k": {str(k): v for k, v in res.items()}}
+        args = (slots, squad, locks, free, by_pos, max_drop, min_rating)
+        combos = eng.k_swap_combos(*args, k_max=k_max, n=25, ok=ok, base=base)
+        combos_mgr = eng.k_swap_combos(*args, k_max=k_max, n=25, ok=ok, base=base, mgr_change=True)
+        return {"budget": budget.report() if budget else None, "bad_prices": bad_prices,
+                "base": base, "base_free": base_free, "li_now": li_now, "li_cur": fixed.get("li"),
+                "singles": singles, "chain": chain, "chain_total": chain_total,
+                "combos": combos, "combosMgr": combos_mgr, "pool": len(pool), "unmatched": unmatched,
+                "mgr_suggest": eng.manager_suggestions(slots, squad, fixed, top=15),
+                "mgr_suggest_after": eng.manager_suggestions(slots, final, fixed)}
+
+
+def _mgr_modes(mgr):
+    """(current manager exactly as it is, same manager with the league free to change via League Modifier)."""
+    m = {"ni": (mgr or {}).get("ni"), "li": (mgr or {}).get("li")}
+    return dict(m, li_free=False), dict(m, li_free=True)
 
 
 def _search_setup(b):

@@ -26,6 +26,7 @@ RULES (sources checked 8 Oct 2026, see README):
     and +1 nation; ICON/Hero/Hall of FUT are full chemistry and have no club link
   * men's and women's players link through affiliated clubs (same ck), never through leagues
 """
+import time
 from collections import Counter
 
 CLUB_T = (2, 4, 7)
@@ -82,16 +83,23 @@ def _raw(slots, squad, mni=None, mli=None):
     return rows
 
 
-def _best_league(squad, rows):
-    """League Modifier: the league whose extra member adds the most chemistry (rows computed without a
-    manager league). None if no league adds anything; ties go to the lowest league id."""
+def _choose_league(gain, cur):
+    """League Modifier choice: the league adding the most chemistry. Keeps the current league when it is
+    as good as any other (no item needed); otherwise ties go to the lowest league id."""
+    best = max(gain.values(), default=0)
+    if cur is not None and gain.get(cur, 0) >= best:
+        return cur
+    return min(k for k, v in gain.items() if v == best) if best > 0 else cur
+
+
+def _best_league(squad, rows, cur=None):
+    """rows computed without a manager league."""
     gain = Counter()
     for c, r in zip(squad, rows):
         if r and r["state"] == "ok" and r["raw"] < 3:
             up = min(3, r["club"][1] + pts(r["league"][0] + 1, LEAGUE_T) + r["nation"][1])
             gain[c["li"]] += up - r["raw"]
-    best = max(gain.values(), default=0)
-    return min(k for k, v in gain.items() if v == best) if best > 0 else None
+    return _choose_league(gain, cur)
 
 
 def _manager_rows(slots, squad, mgr):
@@ -99,7 +107,7 @@ def _manager_rows(slots, squad, mgr):
     mgr = mgr or {}
     ni, li = mgr.get("ni"), mgr.get("li")
     if mgr.get("li_free"):
-        li = _best_league(squad, _raw(slots, squad, ni, None))
+        li = _best_league(squad, _raw(slots, squad, ni, None), li)
     return _raw(slots, squad, ni, li), li
 
 
@@ -123,9 +131,65 @@ def evaluate(slots, squad, mgr):
     return {"total": total, "players": players, "mgr_li": mli}
 
 
+_CP = [pts(n, CLUB_T) for n in range(64)]
+_LP = [pts(n, LEAGUE_T) for n in range(64)]
+_NP = [pts(n, NATION_T) for n in range(64)]
+
+
+def _t(c):
+    """Compact read-only view of a card for the search hot path."""
+    if c is None:
+        return None
+    return (c["p"], frozenset(c.get("a") or ()), c.get("ck") or None, c["li"], c["ni"], c.get("xc") or 0,
+            c.get("xl") or 0, c.get("xn") or 0, c.get("ty") == "icon" or bool(c.get("xsl")), bool(c.get("xsn")),
+            bool(c.get("fc")))
+
+
+def _ttotal(slots, ts, mni, mli, free):
+    """Squad chemistry from _t() tuples. Same rules as evaluate(); the manager league is folded in as a
+    per-league gain so a free league (League Modifier) costs nothing extra."""
+    club, lg, nat = {}, {}, {}
+    gl = gn = 0
+    live = []
+    for i, t in enumerate(ts):
+        if t is None:
+            continue
+        pos = slots[i]
+        if pos != t[0] and pos not in t[1]:
+            continue
+        live.append(t)
+        if t[2]:
+            club[t[2]] = club.get(t[2], 0) + 1 + t[5]
+        lg[t[3]] = lg.get(t[3], 0) + 1 + t[6]
+        nat[t[4]] = nat.get(t[4], 0) + 1 + t[7]
+        if t[8]:
+            gl += 1
+        if t[9]:
+            gn += 1
+    total, gain = 0, {}
+    for t in live:
+        if t[10]:
+            total += 3
+            continue
+        base = (_CP[club[t[2]]] if t[2] else 0) + _NP[nat[t[4]] + gn + (1 if t[4] == mni and mni is not None else 0)]
+        lc = lg[t[3]] + gl
+        r0 = base + _LP[lc]
+        if r0 >= 3:
+            total += 3
+            continue
+        total += r0
+        r1 = base + _LP[lc + 1]
+        up = (3 if r1 > 3 else r1) - r0
+        if up:
+            gain[t[3]] = gain.get(t[3], 0) + up
+    li = _choose_league(gain, mli) if free else mli
+    return total + (gain.get(li, 0) if li is not None else 0)
+
+
 def total_only(slots, squad, mgr):
-    rows, _ = _manager_rows(slots, squad, mgr)
-    return sum(r["raw"] for r in rows if r is not None)
+    """Squad chemistry only (the search hot path)."""
+    mgr = mgr or {}
+    return _ttotal(slots, [_t(c) for c in squad], mgr.get("ni"), mgr.get("li"), mgr.get("li_free"))
 
 
 def manager_options(slots, squad, mgr, top=8):
@@ -147,27 +211,24 @@ def manager_options(slots, squad, mgr, top=8):
 
 
 def manager_suggestions(slots, squad, mgr, top=6):
-    """Manager changes that raise squad chemistry: a manager of another nation (new manager card), another
-    league (League Modifier item, or a manager from that league), or both. Only nations/leagues already in
-    the squad can help. With li_free the league is picked automatically, so only the nation varies."""
+    """Manager changes that raise squad chemistry, measured against the current manager as it is:
+    a League Modifier (another league), a manager of another nation (new manager card), or both.
+    Only nations/leagues already in the squad can help."""
     mgr = dict(mgr or {})
-    cur = total_only(slots, squad, mgr)
-    _, cur_li = _manager_rows(slots, squad, mgr)
+    cur_ni, cur_li = mgr.get("ni"), mgr.get("li")
+    cur = total_only(slots, squad, {"ni": cur_ni, "li": cur_li})
     nations = {c["ni"]: c.get("nn") for c in squad if c is not None}
     leagues = {c["li"]: c.get("ln") for c in squad if c is not None}
     out = []
-    for ni in set(nations) | {mgr.get("ni")}:
-        if ni is None:
-            continue
-        cands = [None] if mgr.get("li_free") else list(set(leagues) | {cur_li})
-        for li in cands:
-            m = dict(mgr, ni=ni) if mgr.get("li_free") else dict(mgr, ni=ni, li=li)
-            t = total_only(slots, squad, m)
+    for ni in set(nations) | {cur_ni}:
+        for li in set(leagues) | {cur_li}:
+            if ni is None and li is None:
+                continue
+            t = total_only(slots, squad, {"ni": ni, "li": li})
             if t <= cur:
                 continue
-            _, used = _manager_rows(slots, squad, m)
-            out.append({"ni": ni, "nn": nations.get(ni), "li": used, "ln": leagues.get(used), "total": t, "d": t - cur,
-                        "nation": ni != mgr.get("ni"), "league": used != cur_li and not mgr.get("li_free")})
+            out.append({"ni": ni, "nn": nations.get(ni), "li": li, "ln": leagues.get(li), "total": t, "d": t - cur,
+                        "nation": ni != cur_ni, "league": li != cur_li})
     # drop options a simpler change already matches (e.g. new nation + new league = new nation alone)
     def simpler(o, p):
         return (p["nation"] <= o["nation"] and p["league"] <= o["league"] and (p["nation"], p["league"]) != (o["nation"], o["league"])
@@ -204,17 +265,21 @@ def _slot_candidates(i, slots, squad, by_pos, max_drop, min_rating):
 
 
 def single_swaps(slots, squad, locks, mgr, by_pos, max_drop=3, min_rating=0):
-    base = total_only(slots, squad, mgr)
+    mgr = mgr or {}
+    mni, mli, free = mgr.get("ni"), mgr.get("li"), mgr.get("li_free")
+    ts = [_t(c) for c in squad]
+    base = _ttotal(slots, ts, mni, mli, free)
     out = []
     for i, cur in enumerate(squad):
         if locks[i] or cur is None:
             continue
+        keep = ts[i]
         for cand in _slot_candidates(i, slots, squad, by_pos, max_drop, min_rating):
-            new = list(squad)
-            new[i] = cand
-            t = total_only(slots, new, mgr)
+            ts[i] = _t(cand)
+            t = _ttotal(slots, ts, mni, mli, free)
             out.append({"slot": i, "out": cur, "in": cand, "total": t, "d": t - base,
                         "dr": cand["ov"] - cur["ov"]})
+        ts[i] = keep
     return base, out
 
 
@@ -268,19 +333,23 @@ def synergy_pairs(slots, squad, locks, mgr, by_pos, allsingles, base, max_drop, 
                 merged.append(c)
         shortlist[i] = merged
     idx = sorted(shortlist)
+    t0 = [_t(c) for c in squad]
+    ts = list(t0)
+    tc = {c["s"]: _t(c) for lst in shortlist.values() for c in lst}
     out = []
     for a in range(len(idx)):
         for b in range(a + 1, len(idx)):
             i, j = idx[a], idx[b]
+            excl = {c["bp"] for k, c in enumerate(squad) if c and k not in (i, j)}
             for ci in shortlist[i]:
                 for cj in shortlist[j]:
                     if ci["bp"] == cj["bp"]:
                         continue
-                    new = list(squad)
-                    new[i], new[j] = ci, cj
-                    if len({c["bp"] for c in new if c}) < len([c for c in new if c]):
+                    if ci["bp"] in excl or cj["bp"] in excl:
                         continue
-                    t = total_only(slots, new, mgr)
+                    ts[i], ts[j] = tc[ci["s"]], tc[cj["s"]]
+                    t = _ttotal(slots, ts, mg.get("ni"), mg.get("li"), mg.get("li_free"))
+                    ts[i], ts[j] = t0[i], t0[j]
                     d = t - base
                     if d <= 0:
                         continue
@@ -358,71 +427,107 @@ def _shortlist(slots, squad, locks, mgr, by_pos, max_drop, min_rating, allsingle
 
 
 def k_swap_combos(slots, squad, locks, mgr, by_pos, max_drop=3, min_rating=0, k_max=3, n=25,
-                  beam=20, per_slot=15, ok=None, mgr_configs=None):
-    """Best squads reachable with exactly 1..k_max swaps (beam search; k=1 is exhaustive over the shortlist).
-    Every swap in a listed combo is needed: dropping any one of them loses chemistry.
-    mgr_configs: extra manager settings to try (manager change + swaps); each result says which it used.
-    Returns {k: [ {swaps, total, d, dr, mgr} ]}."""
-    base = total_only(slots, squad, mgr)
-    configs = [(None, mgr)] + [(c, dict(mgr or {}, **{k: v for k, v in c.items() if k in ("ni", "li")}))
-                               for c in (mgr_configs or [])]
-    best = {}  # (k, swap key) -> result
-    for label, m in configs:
-        _, allr = single_swaps(slots, squad, locks, m, by_pos, max_drop, min_rating)
-        sl = _shortlist(slots, squad, locks, m, by_pos, max_drop, min_rating, allr, per_slot, ok)
-        frontier = [((), list(squad))]
-        for k in range(1, k_max + 1):
-            nxt = {}
-            for swaps, sq in frontier:
-                used = {s for s, _ in swaps}
-                bps = {c["bp"] for c in sq if c}
-                for i, cands in sl.items():
-                    if i in used:
-                        continue
-                    for c in cands:
-                        if c["bp"] in bps:
-                            continue
-                        key = tuple(sorted(swaps + ((i, c["s"]),)))
-                        if key in nxt:
-                            continue
-                        new = list(sq)
-                        new[i] = c
-                        nxt[key] = (total_only(slots, new, m), new)
-            ranked = sorted(nxt.items(), key=lambda kv: (-kv[1][0], -sum(c["ov"] for c in kv[1][1] if c)))
-            for key, (t, sq) in ranked:
-                if t <= base:
-                    break
-                prev = best.get((k, key))
-                if prev and prev["total"] >= t:
+                  beam=24, per_slot=15, ok=None, mgr_change=False, base=None, time_limit=8.0):
+    """Best squads reachable with exactly 1..k_max player swaps (beam search over a per-slot shortlist).
+    The manager league is always free (League Modifier); each result says which league it uses.
+    mgr_change=True also lets the search switch the manager's nation (a new manager card): every candidate
+    nation gets its own seed and keeps a few states in the beam, so changes that only pay off after some
+    swaps survive. Every swap in a listed combo is needed (undoing any one loses chemistry), and other
+    versions of the same players are collapsed. Stops expanding after time_limit seconds.
+    Returns {"by_k": {k: [ {swaps, total, d, dr, li, league, mgr} ]}, "timed_out": bool}."""
+    started = time.time()
+    mgr = dict(mgr or {}, li_free=True)
+    cur_li = mgr.get("li")
+    if base is None:
+        base = total_only(slots, squad, dict(mgr, li_free=False))
+    _, allr = single_swaps(slots, squad, locks, mgr, by_pos, max_drop, min_rating)
+    sl = _shortlist(slots, squad, locks, mgr, by_pos, max_drop, min_rating, allr, per_slot, ok)
+    configs = [mgr]
+    if mgr_change:
+        seen_n = Counter(c["ni"] for c in squad if c)
+        for cands in sl.values():
+            seen_n.update(c["ni"] for c in cands)
+        configs += [dict(mgr, ni=ni) for ni, _ in seen_n.most_common() if ni != mgr.get("ni")][:12]
+    nations = {}
+    for c in squad:
+        if c:
+            nations[c["ni"]] = c.get("nn")
+    for cands in sl.values():
+        for c in cands:
+            nations.setdefault(c["ni"], c.get("nn"))
+    tc = {c["s"]: _t(c) for cands in sl.values() for c in cands}
+    t0 = [_t(c) for c in squad]
+    cfg = [(m.get("ni"), m.get("li")) for m in configs]
+    best = {}  # (k, swap key, config) -> (total, squad)
+    frontier = [((), list(squad), t0, ci) for ci in range(len(configs))]
+    timed_out = False
+    for k in range(1, k_max + 1):
+        if time.time() - started > time_limit:
+            timed_out = True
+            break
+        nxt = {}
+        for swaps, sq, ts, ci in frontier:
+            used = {s for s, _ in swaps}
+            mni, mli = cfg[ci]
+            for i, cands in sl.items():
+                if i in used:
                     continue
-                best[(k, key)] = {"key": key, "sq": sq, "total": t, "m": m, "label": label}
-            frontier = [(key, sq) for key, (t, sq) in ranked[:beam]]
-    out = {}
-    for (k, key), r in best.items():
-        out.setdefault(k, []).append(r)
-    res = {}
-    for k, rs in out.items():
-        rs.sort(key=lambda r: (-r["total"], r["label"] is not None, -sum(c["ov"] for c in r["sq"] if c)))
-        keep, seen = [], set()
-        for r in rs:
-            if len(keep) >= n:
+                bps = {c["bp"] for j, c in enumerate(sq) if c and j != i}
+                for c in cands:
+                    if c["bp"] in bps:
+                        continue
+                    key = tuple(sorted(swaps + ((i, c["s"]),)))
+                    if (key, ci) in nxt:
+                        continue
+                    nts = list(ts)
+                    nts[i] = tc[c["s"]]
+                    nxt[(key, ci)] = (_ttotal(slots, nts, mni, mli, True), sq, nts, i, c)
+        ranked = sorted(nxt.items(), key=lambda kv: (-kv[1][0], kv[0][1] != 0, -kv[1][4]["ov"]))
+        materialise = {}
+
+        def squad_of(entry):
+            _, sq, _, i, c = entry
+            new = list(sq)
+            new[i] = c
+            return new
+        for (key, ci), entry in ranked:
+            if entry[0] <= base or len(materialise) >= 6 * n:
                 break
-            players = tuple(sorted((s, r["sq"][s]["bp"]) for s, _ in r["key"]))
-            if players in seen:  # same players in other card versions: keep the best-ranked one
-                continue
-            seen.add(players)
-            # every swap must matter: undoing any single one of them must lose chemistry
-            needed = True
-            for slot, _ in r["key"]:
-                back = list(r["sq"])
-                back[slot] = squad[slot]
-                if total_only(slots, back, r["m"]) >= r["total"]:
-                    needed = False
-                    break
-            if not needed:
-                continue
-            swaps = [{"slot": s, "out": squad[s], "in": r["sq"][s]} for s, _ in r["key"]]
-            keep.append({"swaps": swaps, "total": r["total"], "d": r["total"] - base,
-                         "dr": sum(w["in"]["ov"] - w["out"]["ov"] for w in swaps), "mgr": r["label"]})
-        res[k] = keep
-    return {k: res.get(k, []) for k in range(1, k_max + 1)}
+            materialise[(key, ci)] = squad_of(entry)
+            best[(k, key, ci)] = (entry[0], materialise[(key, ci)], entry[2])
+        keep, per_cfg = [], Counter()
+        for (key, ci), entry in ranked:
+            if len(keep) < beam or per_cfg[ci] < 3:
+                sq = materialise.get((key, ci)) or squad_of(entry)
+                keep.append((key, sq, entry[2], ci))
+                per_cfg[ci] += 1
+            elif len(keep) >= beam + 3 * len(configs):
+                break
+        frontier = keep
+    out = {k: [] for k in range(1, k_max + 1)}
+    order = sorted(best.items(), key=lambda kv: (kv[0][0], -kv[1][0], kv[0][2] != 0, -sum(c["ov"] for c in kv[1][1] if c)))
+    seen = set()
+    for (k, key, ci), (t, sq, ts) in order:
+        if len(out[k]) >= n:
+            continue
+        players = (k, tuple(sorted((s, sq[s]["bp"]) for s, _ in key)))
+        if players in seen:  # same players (other card versions / other manager): keep the best-ranked one
+            continue
+        m = configs[ci]
+        needed = True
+        for slot, _ in key:
+            back = list(ts)
+            back[slot] = t0[slot]
+            if _ttotal(slots, back, cfg[ci][0], cfg[ci][1], True) >= t:
+                needed = False
+                break
+        if not needed:
+            continue
+        seen.add(players)
+        _, li = _manager_rows(slots, sq, m)
+        swaps = [{"slot": s, "out": squad[s], "in": sq[s]} for s, _ in key]
+        out[k].append({"swaps": swaps, "total": t, "d": t - base,
+                       "dr": sum(w["in"]["ov"] - w["out"]["ov"] for w in swaps),
+                       "li": li, "league": li != cur_li,
+                       "mgr": None if ci == 0 else {"ni": m["ni"], "nn": nations.get(m["ni"]), "nation": True}})
+    return {"by_k": out, "timed_out": timed_out}
