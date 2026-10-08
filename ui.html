@@ -50,6 +50,17 @@ dialog::backdrop{background:#000a}
 .note{padding:7px 9px;border-radius:8px;border:1px solid var(--line);background:var(--panel2);margin-top:8px;font-size:12px}
 .note.warn{border-color:var(--warn)} .note.bad{border-color:var(--bad)}
 .chk{display:flex;gap:6px;align-items:center;font-size:13px}
+.slot.dragover .card{outline:2px dashed var(--acc);outline-offset:2px}
+.card[draggable=true]{cursor:grab}
+.hit.hl{background:var(--panel2);outline:1px solid var(--acc)}
+.tabs{display:flex;gap:6px;margin:10px 0 6px}
+.tabs button.on{border-color:var(--acc);background:#14315a}
+.pv{width:100%;border-collapse:collapse;margin-top:8px;font-size:13px}
+.pv td{padding:4px 6px;border-top:1px solid var(--line);vertical-align:middle}
+.pv select{width:100%}
+.banner{background:#5a1f1f;color:#fff;padding:10px 14px;font:14px system-ui}
+.bm{display:inline-block;padding:6px 10px;border-radius:6px;background:var(--acc);color:#04101f;font-weight:700;text-decoration:none}
+.hdrgrp{display:flex;gap:6px;align-items:center;flex-wrap:wrap}
 </style>
 </head>
 <body>
@@ -57,22 +68,33 @@ dialog::backdrop{background:#000a}
   <h1>Chem Builder <span class="mut small">EA FC 27</span></h1>
   <label class="f" style="flex-direction:row;align-items:center;gap:6px">Formation
     <select id="formation"></select></label>
-  <button id="clear" class="sm">Clear squad</button>
-  <button id="impBtn" class="sm">Paste squad…</button>
+  <div class="hdrgrp">
+    <button id="impBtn" class="sm primary">Import squad…</button>
+    <button id="undo" class="sm" title="Undo (Ctrl+Z)">↶ Undo</button>
+    <button id="redo" class="sm" title="Redo (Ctrl+Y)">↷ Redo</button>
+    <button id="clear" class="sm">Clear squad</button>
+  </div>
+  <div class="hdrgrp">
+    <select id="savedSel" class="sm" style="padding:2px 6px"><option value="">Saved squads…</option></select>
+    <button id="saveAs" class="sm">Save as…</button>
+    <button id="delSaved" class="sm" title="Delete the selected saved squad">Delete</button>
+    <button id="share" class="sm" title="Copy a link that opens this squad in Chem Builder">Share link</button>
+  </div>
   <span class="mut small" id="dataInfo"></span>
   <button id="sync" class="sm">Update card data</button>
   <button id="diag" class="sm">Test connection</button>
+  <button id="quit" class="sm" title="Stop the app (it also stops by itself shortly after you close this tab)">Stop app</button>
   <span class="small" id="syncMsg"></span>
 </header>
 <main>
   <section>
     <div class="pitch" id="pitch"></div>
-    <div class="small mut" style="margin-top:8px">Click a card to pick a player. 🔒 locks a slot so it is never swapped (it still counts for everyone else's links). The position dropdown above each slot edits that slot, so any formation can be built.</div>
+    <div class="small mut" style="margin-top:8px">Click a card to pick a player; clicking an empty slot starts <b>fill mode</b> (type, Enter, and it moves to the next empty slot). Drag a card onto another slot to swap them. 🔒 locks a slot so it is never swapped by the optimizer (it still counts for everyone else's links). The position dropdown above each slot edits that slot.</div>
   </section>
   <section>
     <div class="panel">
       <div style="display:flex;align-items:baseline;gap:12px">
-        <div class="big" id="total">–</div><div class="mut">/ 33 squad chemistry</div>
+        <div class="big" id="total">–</div><div class="mut">/ 33 squad chemistry <span id="filled" class="small"></span></div>
         <div style="margin-left:auto" class="small mut">game shows
           <input id="gameTotal" type="number" min="0" max="33" style="width:56px"></div>
       </div>
@@ -95,8 +117,8 @@ dialog::backdrop{background:#000a}
           <label class="f">Budget: max price per incoming card (coins)<input id="maxPrice" type="text" inputmode="numeric" placeholder="blank = no limit, e.g. 15000 or 15k"></label>
           <label class="chk" style="align-self:end"><input type="checkbox" id="incUnk"> also show cards with no price data</label>
         </div>
-        <details style="margin-top:8px"><summary class="small mut">Prices I know (optional, used by the budget)</summary>
-          <div class="small mut" style="margin-top:4px">The app tries to look prices up live. If that is blocked on your network, paste prices here, one per line: <code>Mbappé 91 12,500</code> or <code>Cafu 85 8.5k</code>. These always win over live prices. Budget does not apply when "Only use cards I own" is filled in. Prices are not platform-specific here: paste the platform you play on.</div>
+        <details style="margin-top:8px"><summary class="small mut">Prices I know (used by the budget)</summary>
+          <div class="small mut" style="margin-top:4px">FUT.GG keeps its prices behind a browser check that programs can't pass, so the budget runs on prices you paste here, one per line: <code>Mbappé 91 12,500</code> or <code>Cafu 85 8.5k</code>. Budget does not apply when "Only use cards I own" is filled in. Paste prices for the platform you play on.</div>
           <textarea id="priceList" rows="4" style="width:100%;margin-top:6px"></textarea>
         </details>
         <div style="display:flex;gap:14px;margin-top:8px;flex-wrap:wrap">
@@ -117,14 +139,35 @@ dialog::backdrop{background:#000a}
   </section>
 </main>
 
-<dialog id="impDlg">
+<dialog id="impDlg" style="width:min(760px,96vw)">
   <div style="display:flex;gap:8px;align-items:center">
-    <strong style="flex:1">Paste your squad</strong>
+    <strong style="flex:1">Import squad</strong>
     <button id="impClose" class="sm">Close</button>
   </div>
-  <div class="small mut" style="margin:8px 0">One player per line, e.g. <code>ST Mbappé 91</code>, <code>Alisson 87</code> or just <code>Alisson</code>. Position and rating are optional (a position puts the player in that slot; a rating picks the version). Names copied from a FUTBIN or FUT.GG squad page also work.</div>
-  <textarea id="impText" rows="11" style="width:100%" placeholder="GK Alisson 87&#10;LB Cancelo 83&#10;CB Pau Cubarsí 86&#10;…"></textarea>
-  <div style="margin-top:8px;display:flex;gap:8px;align-items:center"><button class="primary" id="impGo">Import into slots</button><span class="small mut" id="impMsg"></span></div>
+  <div class="tabs">
+    <button class="sm on" data-tab="fgg">FUT.GG link</button>
+    <button class="sm" data-tab="futbin">FUTBIN</button>
+    <button class="sm" data-tab="text">Paste text</button>
+  </div>
+  <div data-pane="fgg">
+    <div class="small mut">On FUT.GG: link your EA account (Club → Import), load your squad into the Squad Builder, press <b>Share</b>, and paste the link here. Formation and manager come across too.</div>
+    <div style="display:flex;gap:8px;margin-top:8px"><input id="fggUrl" style="flex:1" placeholder="https://www.fut.gg/27/squad-builder/…"><button class="primary" id="fggGo">Load</button></div>
+  </div>
+  <div data-pane="futbin" hidden>
+    <div class="small mut">FUTBIN blocks programs from reading its pages, so this works through your browser instead:</div>
+    <ol class="small" style="margin:6px 0;padding-left:18px">
+      <li>Drag this button to your bookmarks bar: <a class="bm" id="bmLink" href="#">→ Chem Builder</a></li>
+      <li>On FUTBIN, open your squad (after <b>My Club → Import my club</b>, build or open the squad you play).</li>
+      <li>With Chem Builder running, click the bookmark. This app opens with the squad ready to check.</li>
+    </ol>
+    <div class="small mut">The same bookmark works on a FUT.GG squad page. FUTBIN's page layout couldn't be tested from here, so if the bookmark says it found no players, tell me and I'll adjust it.</div>
+  </div>
+  <div data-pane="text" hidden>
+    <div class="small mut">One player per line, e.g. <code>ST Mbappé 91</code>, <code>Alisson 87</code> or just <code>Alisson</code>. Position and rating are optional.</div>
+    <textarea id="impText" rows="8" style="width:100%;margin-top:6px" placeholder="GK Alisson 87&#10;LB Cancelo 83&#10;CB Pau Cubarsí 86&#10;…"></textarea>
+    <button class="primary" id="impGo" style="margin-top:6px">Preview</button>
+  </div>
+  <div class="small mut" id="impMsg" style="margin-top:6px"></div>
   <div id="impOut"></div>
 </dialog>
 
@@ -133,6 +176,7 @@ dialog::backdrop{background:#000a}
     <strong id="dlgTitle" style="flex:1">Pick player</strong>
     <button id="dlgClose" class="sm">Close</button>
   </div>
+  <div class="small mut" id="fillHint" style="margin-top:4px"></div>
   <input id="q" placeholder="Search by name…" style="width:100%;margin-top:8px" autocomplete="off">
   <label class="chk" style="margin-top:6px"><input type="checkbox" id="live"> also search FUT.GG live (finds cards below the cached rating)</label>
   <div class="list" id="hits"></div>
@@ -154,43 +198,90 @@ dialog::backdrop{background:#000a}
 
 <script>
 "use strict";
-const POS = ["GK","LB","LWB","CB","RB","RWB","CDM","CM","CAM","LM","RM","LW","RW","CF","ST"];
-const FORMATIONS = {
-  "4-1-2-1-2 (2)": [["ST","ST"],["CAM"],["CM","CM"],["CDM"],["LB","CB","CB","RB"],["GK"]],
-  "4-1-2-1-2":     [["ST","ST"],["CAM"],["LM","RM"],["CDM"],["LB","CB","CB","RB"],["GK"]],
-  "4-4-2":         [["ST","ST"],["LM","CM","CM","RM"],["LB","CB","CB","RB"],["GK"]],
-  "4-4-2 (2)":     [["ST","ST"],["LM","CDM","CDM","RM"],["LB","CB","CB","RB"],["GK"]],
-  "4-3-3":         [["LW","ST","RW"],["CM","CM","CM"],["LB","CB","CB","RB"],["GK"]],
-  "4-3-3 (holding)":[["LW","ST","RW"],["CM","CDM","CM"],["LB","CB","CB","RB"],["GK"]],
-  "4-2-3-1":       [["ST"],["LM","CAM","RM"],["CDM","CDM"],["LB","CB","CB","RB"],["GK"]],
-  "4-1-4-1":       [["ST"],["LM","CM","CM","RM"],["CDM"],["LB","CB","CB","RB"],["GK"]],
-};
+// FC 25+ positions (LWB/RWB/CF were folded into LB/RB/ST); formations come from the server (/api/meta)
+const POS = ["GK","LB","CB","RB","CDM","CM","CAM","LM","RM","LW","ST","RW"];
+const DEFAULT_FORMATION = "4-1-2-1-2 (2)";
+const LEGACY_NAMES = {"4-3-3 (holding)":"4-3-3 (2)"};  // v1 preset that isn't an FC 27 formation name
+const KEY = "chemBuilder.v2", KEY_V1 = "chemBuilder.v1", KEY_SAVED = "chemBuilder.saved";
+let FORMATIONS = {};
 const $ = id => document.getElementById(id);
 const esc = s => String(s ?? "").replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
-let META = {nations:[],leagues:[],clubs:[]};
-let S = {formation:"4-1-2-1-2 (2)", slots:[], squad:[], locks:[], mgr:{ni:null,li:null,li_free:true}, game:""};
+let META = {nations:[],leagues:[],clubs:[],formations:[]};
+let S = {formation:DEFAULT_FORMATION, slots:[], squad:[], locks:[], mgr:{ni:null,li:null,li_free:true}, game:""};
 const leagueName = id => { const l = META.leagues.find(x => x[0]===id); return l ? l[1] : "league "+id; };
 const nationName = id => { const n = META.nations.find(x => x[0]===id); return n ? n[1] : "nation "+id; };
-let pickIdx = -1, lastEval = null, evalTimer = null, searchTimer = null;
+let pickIdx = -1, lastEval = null, evalTimer = null, searchTimer = null, fillMode = false, hl = 0, VIS = [];
+const prefsOf = c => [c.p, ...(c.a||[])];
+const fits = (c, pos) => !!c && prefsOf(c).includes(pos);
 
-const flat = name => FORMATIONS[name].flat();
-const rowsOf = name => FORMATIONS[name].map(r => r.length);
+/* ---------- layout ---------- */
+// pitch row of a FUT.GG unique position id: 0 attack, 1 CAM, 2 midfield, 3 CDM, 4 defence, 5 GK
+const lineOfUid = u => u===0?5 : u<=8?4 : u<=11?3 : u<=16?2 : u<=19?1 : 0;
+const LINE_OF_POS = {GK:5,LB:4,CB:4,RB:4,CDM:3,LM:2,CM:2,RM:2,CAM:1,LW:0,ST:0,RW:0};
+const SIDE_OF_POS = {LW:0,LB:0,LM:0,RW:2,RB:2,RM:2};
+function rowsLayout(){
+  // returns rows (attack first) of slot indices, left to right
+  const f = FORMATIONS[S.formation];
+  const rows = [[],[],[],[],[],[]];
+  if(f){ f.uids.forEach((u,i) => rows[lineOfUid(u)].push([-u, i])); }  // FUT.GG ids run right -> left
+  else S.slots.forEach((p,i) => rows[LINE_OF_POS[p] ?? 2].push([SIDE_OF_POS[p] ?? 1, i]));
+  return rows.filter(r => r.length).map(r => r.sort((a,b) => a[0]-b[0]).map(x => x[1]));
+}
 
-function save(){ try{ localStorage.setItem("chemBuilder.v1", JSON.stringify({S, opts:readOpts()})); }catch(e){} }
+/* ---------- state, history, storage ---------- */
+const snap = () => JSON.parse(JSON.stringify({formation:S.formation, slots:S.slots, squad:S.squad, locks:S.locks, mgr:S.mgr}));
+const UNDO = [], REDO = [];
+function commit(){ UNDO.push(snap()); if(UNDO.length>60) UNDO.shift(); REDO.length = 0; updUndo(); }
+function restore(x){ Object.assign(S, JSON.parse(JSON.stringify(x))); syncMgrInputs(); $("formation").value = FORMATIONS[S.formation] ? S.formation : ""; $("results").innerHTML=""; refresh(); }
+function undo(){ if(!UNDO.length) return; REDO.push(snap()); restore(UNDO.pop()); updUndo(); }
+function redo(){ if(!REDO.length) return; UNDO.push(snap()); restore(REDO.pop()); updUndo(); }
+function updUndo(){ $("undo").disabled = !UNDO.length; $("redo").disabled = !REDO.length; }
+
+function save(){ try{ localStorage.setItem(KEY, JSON.stringify({S, opts:readOpts()})); }catch(e){} }
 function load(){
   try{
-    const d = JSON.parse(localStorage.getItem("chemBuilder.v1")||"null");
+    let d = JSON.parse(localStorage.getItem(KEY)||"null");
+    if(!d){  // first run after the update: bring the v1 squad across, re-seated into the new slot order
+      const old = JSON.parse(localStorage.getItem(KEY_V1)||"null");
+      if(old && old.S && old.S.slots && old.S.slots.length===11){
+        const name = FORMATIONS[old.S.formation] ? old.S.formation : (LEGACY_NAMES[old.S.formation] || DEFAULT_FORMATION);
+        const r = reseat(old.S.squad, old.S.locks||[], old.S.slots, FORMATIONS[name].slots);
+        d = {S: Object.assign({}, old.S, {formation:name, slots:FORMATIONS[name].slots.slice(), squad:r.squad, locks:r.locks}), opts:old.opts};
+      }
+    }
     if(d && d.S && d.S.slots && d.S.slots.length===11){
       S = Object.assign(S, d.S); S.mgr = Object.assign({ni:null,li:null,li_free:true}, S.mgr);
       if(d.opts) writeOpts(d.opts); return; }
   }catch(e){}
-  setFormation(S.formation);
+  setFormation(FORMATIONS[DEFAULT_FORMATION] ? DEFAULT_FORMATION : Object.keys(FORMATIONS)[0]);
 }
 function setFormation(name){
   S.formation = name;
-  S.slots = flat(name);
+  S.slots = FORMATIONS[name].slots.slice();
   S.squad = S.squad.length===11 ? S.squad : Array(11).fill(null);
   S.locks = S.locks.length===11 ? S.locks : Array(11).fill(false);
+}
+// Put players into new slots: most players in a preferred position, then same position as before,
+// then same slot. Exact (bitmask DP over 11 slots). Nobody is dropped: misfits go to spare slots.
+function reseat(squad, locks, oldSlots, newSlots){
+  const P = [];
+  squad.forEach((c,i) => { if(c) P.push({c, lock:!!locks[i], was:oldSlots[i], i}); });
+  const m = newSlots.length;
+  const sc = (p,j) => (fits(p.c,newSlots[j])?100:0) + (p.was===newSlots[j]?5:0) + (p.i===j?1:0);
+  let best = new Map([[0,[0,[]]]]);
+  for(const p of P){
+    const nxt = new Map();
+    for(const [mask,[v,picks]] of best) for(let j=0;j<m;j++){
+      if(mask>>j & 1) continue;
+      const k = mask | 1<<j, cand = v + sc(p,j);
+      if(!nxt.has(k) || nxt.get(k)[0] < cand) nxt.set(k, [cand, picks.concat(j)]);
+    }
+    best = nxt;
+  }
+  let top = [-1,[]]; for(const v of best.values()) if(v[0]>top[0]) top = v;
+  const out = Array(m).fill(null), lk = Array(m).fill(false);
+  P.forEach((p,k) => { out[top[1][k]] = p.c; lk[top[1][k]] = p.lock; });
+  return {squad:out, locks:lk};
 }
 function parseCoins(v){
   const m = String(v||"").trim().replace(/,/g,"").match(/^(\d+(?:\.\d+)?)\s*([kKmM]?)$/);
@@ -217,7 +308,7 @@ async function api(path, body){
   return d;
 }
 
-function diamonds(n, inpos=true){
+function diamonds(n){
   const full = "◆".repeat(n), empty = "◇".repeat(3-n);
   return `<span class="dia ${n===0?'z':''}">${full}${empty}</span>`;
 }
@@ -225,20 +316,20 @@ function typeTag(c){ return c.ty==="icon"?"ICON":c.ty==="hero"?"HERO":c.ty==="ho
 function cardLine(c){ return `${esc(c.nn||"?")} · ${esc(c.ln||"?")}${c.cn?" · "+esc(c.cn):""}`; }
 
 function renderPitch(){
-  const pitch = $("pitch"); pitch.innerHTML = "";
-  let idx = 0;
-  for(const n of rowsOf(S.formation)){
+  const pitch = $("pitch"); pitch.innerHTML = ""; VIS = [];
+  for(const r of rowsLayout()){
     const row = document.createElement("div"); row.className = "row";
-    for(let k=0;k<n;k++){
-      const i = idx++, c = S.squad[i], ev = lastEval && lastEval.players[i];
-      const el = document.createElement("div"); el.className = "slot";
+    for(const i of r){
+      VIS.push(i);
+      const c = S.squad[i], ev = lastEval && lastEval.players[i];
+      const el = document.createElement("div"); el.className = "slot"; el.dataset.slot = i;
       const sel = `<select data-i="${i}" class="posSel">${POS.map(p=>`<option ${p===S.slots[i]?"selected":""}>${p}</option>`).join("")}</select>`;
       let body;
       if(!c){ body = `<div class="card empty" data-pick="${i}">+ add player</div>`; }
       else{
         const off = ev && !ev.inpos;
         const tip = ev && ev.inpos && !ev.full ? `club ${ev.club[0]} → +${ev.club[1]} · league ${ev.league[0]} → +${ev.league[1]} · nation ${ev.nation[0]} → +${ev.nation[1]} · manager +${ev.mgr}` : (ev&&ev.full?"full chemistry card":"");
-        body = `<div class="card ${off?"off":""}" data-pick="${i}" title="${esc(tip)}">
+        body = `<div class="card ${off?"off":""}" data-pick="${i}" draggable="true" title="${esc(tip)}">
           <div class="nm"><span class="ov">${c.ov}</span> ${esc(c.n)}<span class="tag">${esc(c.p)}</span>${typeTag(c)?`<span class="tag">${typeTag(c)}</span>`:""}</div>
           <div class="ln">${esc(c.nn)}</div><div class="ln">${esc(c.ln)}</div><div class="ln">${esc(c.cn||"–")}</div>
           <div>${ev?diamonds(ev.chem):""}${off?`<span class="tag" style="color:var(--bad)">off-position</span>`:""}</div></div>`;
@@ -251,52 +342,98 @@ function renderPitch(){
 }
 
 function renderTotal(){
+  const n = S.squad.filter(Boolean).length, full = n===11;
   const t = lastEval ? lastEval.total : null, el = $("total");
   el.textContent = t===null ? "–" : t;
-  el.className = "big " + (t===null ? "" : t>=30?"ok":t>=24?"mid":"low");
+  el.className = "big " + (t===null || !full ? "" : t>=30?"ok":t>=24?"mid":"low");
+  $("filled").textContent = n && !full ? `(${n} of 11 placed so far)` : "";
   const g = $("gameTotal").value, note = $("gameNote");
-  if(t!==null && g!=="" && S.squad.every(Boolean)){
+  if(t!==null && g!=="" && full){
     if(+g===t) note.innerHTML = `<div class="note">Matches the game ✔ — the rules in this tool agree with what you see in-game.</div>`;
     else note.innerHTML = `<div class="note bad">Mismatch: the game shows ${esc(g)}, this tool computes ${t}. Check the manager nation/league, slot positions and any boosted-chemistry card. If everything is right, the chemistry rules may have changed — tell me and I'll re-check.</div>`;
   } else note.innerHTML = "";
   const mi = $("mInfo");
   if(S.mgr.li_free && lastEval && lastEval.mgr_li != null)
     mi.innerHTML = `Best manager league for this squad: <strong>${esc(leagueName(lastEval.mgr_li))}</strong> — apply a League Modifier for it.`;
-  else if(S.mgr.li_free && lastEval) mi.textContent = "No manager league would add chemistry here.";
+  else if(S.mgr.li_free && lastEval && full) mi.textContent = "No manager league would add chemistry here.";
   else mi.textContent = "";
 }
 
 async function refresh(){
   renderPitch(); renderTotal(); save();
-  if(!S.squad.every(Boolean)){ lastEval = null; renderPitch(); renderTotal(); return; }
   clearTimeout(evalTimer);
-  evalTimer = setTimeout(async ()=>{
+  if(!S.squad.some(Boolean)){ lastEval = null; renderPitch(); renderTotal(); return; }
+  evalTimer = setTimeout(async ()=>{   // chemistry is live while the squad is being built, not only at 11/11
     try{ lastEval = await api("/api/evaluate", {slots:S.slots, squad:S.squad, mgr:S.mgr}); renderPitch(); renderTotal(); }
     catch(e){ $("goMsg").textContent = e.message; }
   }, 60);
 }
 
-/* ---------- picker ---------- */
+/* ---------- picker + fill mode ---------- */
+function nextEmpty(after){
+  const k = VIS.indexOf(after);
+  for(let n=1;n<=VIS.length;n++){ const i = VIS[(k+n) % VIS.length]; if(!S.squad[i]) return i; }
+  return -1;
+}
 function openPicker(i){
-  pickIdx = i; $("dlgTitle").textContent = `Pick player for ${S.slots[i]}`;
-  $("q").value = ""; $("hits").innerHTML = `<div class="mut small" style="padding:6px">Type a name to search the card database.</div>`;
-  $("dlg").showModal(); $("q").focus();
+  pickIdx = i; fillMode = !S.squad[i];
+  const empty = S.squad.filter(c => !c).length;
+  $("dlgTitle").textContent = `Pick player for ${S.slots[i]}`;
+  $("fillHint").innerHTML = fillMode ? `Fill mode · ${empty} empty slot${empty===1?"":"s"} left · <b>Enter</b> picks the highlighted card and moves on · <b>↑↓</b> choose · <b>Esc</b> stop`
+                                     : `Replacing ${esc(S.squad[i].n)} · <b>Enter</b> picks · <b>↑↓</b> choose · <b>Esc</b> cancel`;
+  $("q").value = ""; hitCache = []; hitQuery = ""; hl = 0;
+  $("hits").innerHTML = `<div class="mut small" style="padding:6px">Type a name to search the card database.</div>`;
+  highlightSlot(i);
+  if(!$("dlg").open) $("dlg").showModal();
+  $("q").focus();
+}
+function highlightSlot(i){
+  document.querySelectorAll(".slot .card").forEach(c => c.style.boxShadow = "");
+  const el = document.querySelector(`.slot[data-slot="${i}"] .card`); if(el) el.style.boxShadow = "0 0 0 2px var(--acc)";
 }
 function hitHtml(c, k){
-  const okPos = [c.p, ...(c.a||[])].includes(S.slots[pickIdx]);
-  return `<div class="hit" data-hit="${k}"><div><strong>${c.ov}</strong> ${esc(c.n)} <span class="mut">${esc(c.p)}${c.a&&c.a.length?" / "+esc(c.a.join(", ")):""}</span>${typeTag(c)?`<span class="tag">${typeTag(c)}</span>`:""}${c.live?`<span class="tag">live</span>`:""}${okPos?"":`<span class="tag" style="color:var(--bad)">off-position</span>`}<div class="small mut">${esc(c.rt)} · ${cardLine(c)}${c.g===2?" · women":""}</div></div></div>`;
+  const okPos = fits(c, S.slots[pickIdx]);
+  return `<div class="hit ${k===hl?"hl":""}" data-hit="${k}"><div><strong>${c.ov}</strong> ${esc(c.n)} <span class="mut">${esc(c.p)}${c.a&&c.a.length?" / "+esc(c.a.join(", ")):""}</span>${typeTag(c)?`<span class="tag">${typeTag(c)}</span>`:""}${c.live?`<span class="tag">live</span>`:""}${okPos?"":`<span class="tag" style="color:var(--bad)">off-position</span>`}<div class="small mut">${esc(c.rt)} · ${cardLine(c)}${c.g===2?" · women":""}</div></div></div>`;
 }
-let hitCache = [];
+let hitCache = [], hitQuery = "", liveError = null;
+function renderHits(){
+  const le = liveError ? `<div class="note bad">Live FUT.GG search failed: ${esc(liveError)}</div>` : "";
+  $("hits").innerHTML = le + (hitCache.length ? hitCache.map(hitHtml).join("") : `<div class="mut small" style="padding:6px">No match. Try "also search FUT.GG live" or add a custom card.</div>`);
+  const h = $("hits").querySelector(".hl"); if(h) h.scrollIntoView({block:"nearest"});
+}
 async function doSearch(){
   const q = $("q").value.trim(); if(!q) return;
   try{
     const res = await api(`/api/search?q=${encodeURIComponent(q)}&live=${$("live").checked?1:0}`);
-    hitCache = res.hits;
-    const le = res.live_error ? `<div class="note bad">Live FUT.GG search failed: ${esc(res.live_error)}</div>` : "";
-    $("hits").innerHTML = le + (hitCache.length ? hitCache.map(hitHtml).join("") : `<div class="mut small" style="padding:6px">No match. Try "also search FUT.GG live" or add a custom card.</div>`);
+    if(q !== $("q").value.trim()) return;  // a newer search is on its way
+    const pos = S.slots[pickIdx];   // cards that can play this slot first, otherwise the server's order (rating)
+    hitCache = res.hits.map((c,k)=>[c,k]).sort((a,b)=> (fits(b[0],pos)-fits(a[0],pos)) || a[1]-b[1]).map(x=>x[0]);
+    hitQuery = q; liveError = res.live_error; hl = 0; renderHits();
   }catch(e){ $("hits").innerHTML = `<div class="note bad">${esc(e.message)}</div>`; }
 }
-function setCard(c){ S.squad[pickIdx] = c; $("dlg").close(); refresh(); }
+function setCard(c){
+  commit(); S.squad[pickIdx] = c; refresh();
+  const nxt = fillMode ? nextEmpty(pickIdx) : -1;
+  if(nxt >= 0){ renderPitch(); openPicker(nxt); } else $("dlg").close();
+}
+
+/* ---------- drag to swap ---------- */
+let dragFrom = -1;
+$("pitch").addEventListener("dragstart", e => { const s = e.target.closest(".slot"); if(!s) return; dragFrom = +s.dataset.slot; e.dataTransfer.effectAllowed = "move"; e.dataTransfer.setData("text/plain", String(dragFrom)); });
+$("pitch").addEventListener("dragover", e => { const s = e.target.closest(".slot"); if(s && dragFrom>=0){ e.preventDefault(); document.querySelectorAll(".slot.dragover").forEach(x=>x.classList.remove("dragover")); s.classList.add("dragover"); } });
+$("pitch").addEventListener("dragleave", e => { const s = e.target.closest(".slot"); if(s && !s.contains(e.relatedTarget)) s.classList.remove("dragover"); });
+$("pitch").addEventListener("drop", e => {
+  e.preventDefault(); const s = e.target.closest(".slot"); const to = s ? +s.dataset.slot : -1;
+  document.querySelectorAll(".slot.dragover").forEach(x=>x.classList.remove("dragover"));
+  if(to>=0 && dragFrom>=0 && to!==dragFrom){
+    commit();
+    [S.squad[to], S.squad[dragFrom]] = [S.squad[dragFrom], S.squad[to]];
+    [S.locks[to], S.locks[dragFrom]] = [S.locks[dragFrom], S.locks[to]];
+    $("results").innerHTML = ""; refresh();
+  }
+  dragFrom = -1;
+});
+$("pitch").addEventListener("dragend", () => { dragFrom = -1; document.querySelectorAll(".slot.dragover").forEach(x=>x.classList.remove("dragover")); });
 
 /* ---------- optimizer ---------- */
 function swapHtml(s){
@@ -314,12 +451,12 @@ function budgetNote(r){
   let t = `Budget: cards over ${b.cap.toLocaleString()} coins are hidden. Checked ${b.lookups} price${b.lookups===1?"":"s"} live; ${b.over} over budget`;
   t += b.unknown ? `, ${b.unknown} skipped because no price was available (tick "also show cards with no price data" to include them).` : ".";
   h += `<div class="note">${t}</div>`;
-  if(b.live_error) h += `<div class="note warn">Live price lookup failed, so only your pasted prices were used: ${esc(b.live_error)}. Click "Test connection" for details, or paste prices under "Prices I know".</div>`;
+  if(b.live_error) h += `<div class="note warn">Live price lookup failed, so only your pasted prices were used: ${esc(b.live_error)}</div>`;
   if(b.capped) h += `<div class="note warn">Reached the live lookup limit for one run; some cheaper options may be missing. Paste prices for cards you care about, or run again.</div>`;
   return h;
 }
 function chip(d){ return `<span class="chip ${d>=0?"pos":"neg"}">${d>=0?"+":""}${d}</span>`; }
-function renderResults(r, base){
+function renderResults(r){
   window.__R = r;
   let h = `<div class="panel" style="margin-top:14px"><div class="small mut">Searched ${r.pool.toLocaleString()} candidate cards. Current ${r.base}/33.</div>`;
   h += budgetNote(r);
@@ -367,44 +504,245 @@ async function runOptimize(){
   }catch(e){ $("goMsg").textContent = e.message; }
   $("go").disabled = false;
 }
-function applySwaps(list){ list.forEach(s => S.squad[s.slot] = s.in); $("results").innerHTML = ""; refresh(); }
+function applySwaps(list){ commit(); list.forEach(s => S.squad[s.slot] = s.in); $("results").innerHTML = ""; refresh(); }
+
+/* ---------- import (FUT.GG link, FUTBIN bookmarklet, text) with preview ---------- */
+let PV = null;   // current preview from the server
+function impTab(t){
+  document.querySelectorAll("#impDlg [data-tab]").forEach(b => b.classList.toggle("on", b.dataset.tab===t));
+  document.querySelectorAll("#impDlg [data-pane]").forEach(p => p.hidden = p.dataset.pane!==t);
+}
+function openImport(tab){
+  PV = null; $("impOut").innerHTML = ""; $("impMsg").textContent = "";
+  impTab(tab||"fgg"); if(!$("impDlg").open) $("impDlg").showModal();
+}
+async function runPreview(body){
+  $("impMsg").textContent = "Loading…"; $("impOut").innerHTML = "";
+  try{
+    PV = await api("/api/import_preview", Object.assign({slots:S.slots}, body));
+    $("impMsg").textContent = ""; renderPreview();
+  }catch(e){ PV = null; $("impMsg").innerHTML = `<span style="color:var(--bad)">${esc(e.message)}</span>`; }
+}
+function pvOptions(row){
+  const seen = new Set(), opts = [];
+  const add = (c, grp) => { if(c && !seen.has(c.s)){ seen.add(c.s); opts.push([c, grp]); } };
+  add(row.card, ""); (row.alts||[]).forEach(c => add(c, "Other versions of this player"));
+  (PV.extra||[]).forEach(c => add(c, "Other players from the import"));
+  return opts;
+}
+function renderPreview(){
+  const f = PV.formation, slots = PV.slots;
+  const placed = PV.rows.filter(r => r.card).length;
+  let h = "";
+  if(PV.title) h += `<div class="small" style="margin-top:6px">Squad: <b>${esc(PV.title)}</b></div>`;
+  if(f) h += `<div class="small" style="margin-top:4px">Formation: <b>${esc(f)}</b>${f!==S.formation?` <span class="mut">(you're on ${esc(S.formation)}; importing switches to ${esc(f)})</span>`:""}</div>`;
+  if(PV.mgr && (PV.mgr.ni!=null || PV.mgr.li!=null)) h += `<div class="small" style="margin-top:4px">Manager: ${PV.mgr.ni!=null?esc(nationName(PV.mgr.ni)):"–"} · ${PV.mgr.li!=null?esc(leagueName(PV.mgr.li)):"–"}</div>`;
+  if(PV.unmatched.length) h += `<div class="note bad">Not found: ${PV.unmatched.map(esc).join(", ")}</div>`;
+  if(PV.notes.length) h += `<div class="note warn">${PV.notes.map(esc).join("<br>")}</div>`;
+  h += `<table class="pv"><tbody>`;
+  const order = f && FORMATIONS[f] ? orderFor(f) : slots.map((_,i)=>i);
+  for(const j of order){
+    const row = PV.rows[j], opts = pvOptions(row);
+    let sel = `<select data-pv="${j}"><option value="">— leave empty —</option>`, grp = null;
+    for(const [c,g] of opts){
+      if(g !== grp){ if(grp) sel += `</optgroup>`; if(g) sel += `<optgroup label="${esc(g)}">`; grp = g; }
+      sel += `<option value="${esc(c.s)}" ${row.card && row.card.s===c.s?"selected":""}>${c.ov} ${esc(c.n)} · ${esc(c.rt)} · ${esc(c.p)}${c.a&&c.a.length?"/"+esc(c.a.join("/")):""}</option>`;
+    }
+    if(grp) sel += `</optgroup>`; sel += `</select>`;
+    const ok = row.card ? fits(row.card, slots[j]) : null;
+    h += `<tr><td style="width:52px"><span class="tag">${esc(slots[j])}</span></td><td>${sel}${row.src && row.src!=="FUT.GG"?`<div class="small mut">${esc(row.src)}</div>`:""}</td><td style="width:110px" class="small" data-pvst="${j}">${ok===null?"":ok?`<span style="color:var(--ok)">✔ in position</span>`:`<span style="color:var(--bad)">off-position</span>`}</td></tr>`;
+  }
+  h += `</tbody></table>`;
+  h += `<label class="chk" style="margin-top:8px"><input type="checkbox" id="pvReplace" checked> Replace the whole squad (unticked: only fill the slots listed above with a player)</label>`;
+  h += `<div style="margin-top:8px;display:flex;gap:8px;align-items:center"><button class="primary" id="pvApply">Apply ${placed} player${placed===1?"":"s"}</button><span class="small mut">You can undo this afterwards.</span></div>`;
+  $("impOut").innerHTML = h;
+}
+function orderFor(name){
+  const keep = {formation:S.formation, slots:S.slots}; S.formation = name; S.slots = FORMATIONS[name].slots;
+  const o = rowsLayout().flat(); S.formation = keep.formation; S.slots = keep.slots; return o;
+}
+function pvCardFor(j, slug){
+  if(!slug) return null;
+  const row = PV.rows[j];
+  return [row.card, ...(row.alts||[]), ...(PV.extra||[])].find(c => c && c.s===slug) || null;
+}
+$("impOut").addEventListener("change", e => {
+  const s = e.target.closest("[data-pv]"); if(!s) return;
+  const j = +s.dataset.pv, c = pvCardFor(j, s.value);
+  PV.rows[j].card = c ? Object.assign({}, c) : null;
+  const st = $("impOut").querySelector(`[data-pvst="${j}"]`);
+  if(st) st.innerHTML = !c ? "" : fits(c, PV.slots[j]) ? `<span style="color:var(--ok)">✔ in position</span>` : `<span style="color:var(--bad)">off-position</span>`;
+  const n = PV.rows.filter(r => r.card).length; const b = $("pvApply"); if(b) b.textContent = `Apply ${n} player${n===1?"":"s"}`;
+});
+$("impOut").addEventListener("click", e => {
+  if(e.target.id !== "pvApply" || !PV) return;
+  commit();
+  const replace = $("pvReplace").checked;
+  if(PV.formation && FORMATIONS[PV.formation]){ S.formation = PV.formation; S.slots = FORMATIONS[PV.formation].slots.slice(); }
+  else S.slots = PV.slots.slice();
+  if(replace){ S.squad = Array(11).fill(null); S.locks = Array(11).fill(false); }
+  PV.rows.forEach((r,j) => { if(r.card){ S.squad[j] = r.card; S.locks[j] = false; } });
+  if(PV.mgr){ if(PV.mgr.ni!=null) S.mgr.ni = PV.mgr.ni; if(PV.mgr.li!=null) S.mgr.li = PV.mgr.li; }
+  syncMgrInputs(); $("formation").value = FORMATIONS[S.formation] ? S.formation : "";
+  $("impDlg").close(); $("results").innerHTML = ""; refresh();
+});
+document.querySelectorAll("#impDlg [data-tab]").forEach(b => b.onclick = () => impTab(b.dataset.tab));
+$("fggGo").onclick = () => { const u = $("fggUrl").value.trim(); if(u) runPreview({mode:"fgg", url:u}); };
+$("fggUrl").addEventListener("keydown", e => { if(e.key==="Enter") $("fggGo").click(); });
+$("impGo").onclick = () => { const t = $("impText").value; if(t.trim()) runPreview({mode:"text", text:t}); };
+function bookmarklet(){
+  // runs on the FUTBIN / FUT.GG page in the user's own browser. FUTBIN card images are named after the
+  // EA card id (cdn.futbin.com/content/fifa27/img/players/p50563395.png = special, /231747.png = base).
+  const base = location.origin + "/";
+  const code = `(function(){var B=${JSON.stringify(base)};var u=location.href.match(/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/i);`
+    + `if(/fut\\.gg$/.test(location.hostname)&&u){window.open(B+'#import=fgg:'+u[0]);return}`
+    + `var ids=[],seen={};document.querySelectorAll('img').forEach(function(i){[i.currentSrc,i.src,i.getAttribute('data-src'),i.getAttribute('data-original'),i.getAttribute('srcset')].forEach(function(s){var m=s&&String(s).match(/\\/players\\/p?(\\d{3,})\\.(?:png|webp)/);if(m&&!seen[m[1]]){seen[m[1]]=1;ids.push(m[1])}})});`
+    + `if(!ids.length){alert('Chem Builder: no player cards found on this page. Open a squad page and try again.');return}`
+    + `window.open(B+'#import=ids:'+ids.join(','))})()`;
+  return "javascript:" + encodeURIComponent(code);
+}
+
+/* ---------- saved squads + share links ---------- */
+function savedAll(){ try{ return JSON.parse(localStorage.getItem(KEY_SAVED)||"{}"); }catch(e){ return {}; } }
+function renderSaved(sel){
+  const all = savedAll(), names = Object.keys(all).sort((a,b)=>a.localeCompare(b));
+  $("savedSel").innerHTML = `<option value="">Saved squads${names.length?` (${names.length})`:""}…</option>` + names.map(n=>`<option ${n===sel?"selected":""}>${esc(n)}</option>`).join("");
+}
+$("saveAs").onclick = () => {
+  const def = $("savedSel").value || `${S.formation} ${new Date().toLocaleDateString()}`;
+  const name = (prompt("Save this squad as:", def)||"").trim(); if(!name) return;
+  const all = savedAll();
+  if(all[name] && name !== $("savedSel").value && !confirm(`Replace the saved squad "${name}"?`)) return;
+  all[name] = snap();
+  try{ localStorage.setItem(KEY_SAVED, JSON.stringify(all)); }catch(e){ alert("Couldn't save: "+e.message); return; }
+  renderSaved(name);
+};
+$("savedSel").onchange = e => { const x = savedAll()[e.target.value]; if(x){ commit(); restore(x); } };
+$("delSaved").onclick = () => {
+  const n = $("savedSel").value; if(!n || !confirm(`Delete the saved squad "${n}"?`)) return;
+  const all = savedAll(); delete all[n]; localStorage.setItem(KEY_SAVED, JSON.stringify(all)); renderSaved();
+};
+const b64e = s => btoa(String.fromCharCode(...new TextEncoder().encode(s))).replace(/\+/g,"-").replace(/\//g,"_").replace(/=+$/,"");
+const b64d = s => new TextDecoder().decode(Uint8Array.from(atob(s.replace(/-/g,"+").replace(/_/g,"/")), c => c.charCodeAt(0)));
+$("share").onclick = async () => {
+  const f = FORMATIONS[S.formation];
+  const d = {v:1, f:S.formation, p:S.squad.map(c => !c ? null : String(c.s).startsWith("custom:") ? c : c.s),
+             l:S.locks.flatMap((x,i)=>x?[i]:[]), m:S.mgr};
+  if(!f || f.slots.some((p,i)=>p!==S.slots[i])) d.sl = S.slots;
+  const url = location.origin + "/#squad=" + b64e(JSON.stringify(d));
+  try{ await navigator.clipboard.writeText(url); $("syncMsg").textContent = "Share link copied. Whoever opens it needs Chem Builder running on their PC."; }
+  catch(e){ prompt("Copy this link (whoever opens it needs Chem Builder running):", url); }
+};
+async function openShared(enc){
+  let d; try{ d = JSON.parse(b64d(enc)); }catch(e){ $("syncMsg").textContent = "That share link is damaged."; return; }
+  const slugs = (d.p||[]).filter(x => typeof x === "string");
+  let got = {cards:{}, missing:[]};
+  try{ if(slugs.length) got = await api("/api/cards", {slugs}); }catch(e){ $("syncMsg").textContent = e.message; }
+  commit();
+  const name = FORMATIONS[d.f] ? d.f : DEFAULT_FORMATION;
+  S.formation = name; S.slots = (d.sl && d.sl.length===11) ? d.sl : FORMATIONS[name].slots.slice();
+  S.squad = (d.p||[]).slice(0,11).map(x => !x ? null : typeof x === "string" ? (got.cards[x]||null) : x);
+  while(S.squad.length<11) S.squad.push(null);
+  S.locks = Array(11).fill(false); (d.l||[]).forEach(i => { if(i>=0 && i<11) S.locks[i] = true; });
+  if(d.m) S.mgr = Object.assign({ni:null,li:null,li_free:true}, d.m);
+  syncMgrInputs(); $("formation").value = FORMATIONS[S.formation] ? S.formation : "";
+  $("results").innerHTML = ""; refresh();
+  $("syncMsg").textContent = got.missing.length ? `Shared squad loaded; ${got.missing.length} card(s) couldn't be found.` : "Shared squad loaded (Undo goes back to your previous squad).";
+}
+function handleHash(){
+  const h = decodeURIComponent(location.hash.slice(1)); if(!h) return;
+  history.replaceState(null, "", location.pathname);
+  if(h.startsWith("squad=")) return openShared(h.slice(6));
+  if(h.startsWith("import=fgg:")){ openImport("fgg"); $("fggUrl").value = h.slice(11); return runPreview({mode:"fgg", url:h.slice(11)}); }
+  if(h.startsWith("import=ids:")){ openImport("futbin"); return runPreview({mode:"ids", ids:h.slice(11).split(",")}); }
+}
+
+/* ---------- app lifetime: the server stops by itself shortly after the last tab closes ---------- */
+const TAB = Math.random().toString(36).slice(2);
+let downShown = false;
+async function ping(){
+  try{ await api("/api/ping", {tab:TAB}); if(downShown){ const b = $("downBanner"); if(b) b.remove(); downShown = false; } }
+  catch(e){ if(!downShown){ downShown = true; document.body.insertAdjacentHTML("afterbegin", `<div class="banner" id="downBanner">Chem Builder isn't running. Start it again with <b>start.bat</b> — this page reconnects by itself.</div>`); } }
+}
+addEventListener("pagehide", () => { try{ navigator.sendBeacon("/api/bye", JSON.stringify({tab:TAB})); }catch(e){} });
+addEventListener("pageshow", e => { if(e.persisted) ping(); });
+$("quit").onclick = async () => {
+  if(!confirm("Stop Chem Builder? Your squad stays saved in this browser.")) return;
+  try{ await api("/api/quit", {}); }catch(e){}
+  downShown = true;
+  document.body.insertAdjacentHTML("afterbegin", `<div class="banner" id="downBanner">Chem Builder stopped. Start it again with <b>start.bat</b>.</div>`);
+};
 
 /* ---------- wiring ---------- */
 function fillSelect(sel, items, first){
   sel.innerHTML = (first?`<option value="">${first}</option>`:"") + items.map(([id,name])=>`<option value="${esc(id)}">${esc(name)}</option>`).join("");
 }
+function syncMgrInputs(){
+  $("mNation").value = S.mgr.ni ?? ""; $("mLeague").value = S.mgr.li ?? "";
+  $("mFree").checked = !!S.mgr.li_free; $("mLeague").disabled = !!S.mgr.li_free;
+}
+let started = false;
 async function init(){
   if(location.protocol === "file:"){
-    document.body.insertAdjacentHTML("afterbegin", `<div style="background:#5a1f1f;color:#fff;padding:10px 14px;font:14px system-ui">This page was opened as a file. The app needs its local server: double-click <b>start.bat</b> (or run <code>python chem_builder.py</code>) and use the address it prints, normally http://127.0.0.1:8765/</div>`);
+    document.body.insertAdjacentHTML("afterbegin", `<div class="banner">This page was opened as a file. The app needs its local server: double-click <b>start.bat</b> and it opens the right address for you (normally http://127.0.0.1:8765/).</div>`);
+    return;
   }
-  $("formation").innerHTML = Object.keys(FORMATIONS).map(f=>`<option>${f}</option>`).join("");
-  load();
-  $("formation").value = FORMATIONS[S.formation] ? S.formation : "4-1-2-1-2 (2)";
-  $("gameTotal").value = S.game || "";
   try{
     const m = await api("/api/meta"); META = m;
+    FORMATIONS = Object.fromEntries(m.formations.map(f => [f.name, f]));
     $("dataInfo").textContent = `${m.n.toLocaleString()} cards · synced ${m.meta.synced_at||"?"} · FUT.GG`;
     fillSelect($("mNation"), m.nations, "— none —"); fillSelect($("mLeague"), m.leagues, "— none —");
-    $("mNation").value = S.mgr.ni ?? ""; $("mLeague").value = S.mgr.li ?? "";
-    $("mFree").checked = !!S.mgr.li_free; $("mLeague").disabled = !!S.mgr.li_free;
     fillSelect($("cNat"), m.nations); fillSelect($("cLg"), m.leagues); fillSelect($("cClub"), m.clubs, "— no club —");
-  }catch(e){ $("dataInfo").textContent = "card data unavailable: "+e.message; }
+  }catch(e){ $("dataInfo").textContent = "card data unavailable: "+e.message; return; }
+  $("formation").innerHTML = `<option value="" disabled>Custom</option>` + Object.keys(FORMATIONS).map(f=>`<option>${esc(f)}</option>`).join("");
+  load();
+  $("formation").value = FORMATIONS[S.formation] ? S.formation : "";
+  $("gameTotal").value = S.game || "";
+  syncMgrInputs();
   $("cPos").innerHTML = POS.map(p=>`<option>${p}</option>`).join("");
-  refresh();
+  $("bmLink").href = bookmarklet();
+  renderSaved(); updUndo(); refresh();
+  if(!started){ started = true; ping(); setInterval(ping, 10000); handleHash(); }
 }
-$("formation").onchange = e => { const old = S.squad.slice(); setFormation(e.target.value); S.squad = Array(11).fill(null); S.locks = Array(11).fill(false);
-  // keep players whose position still fits the same slot index if identical
-  old.forEach((c,i)=>{ if(c && [c.p,...(c.a||[])].includes(S.slots[i])) S.squad[i]=c; });
-  $("results").innerHTML=""; refresh(); };
-$("clear").onclick = () => { S.squad = Array(11).fill(null); S.locks = Array(11).fill(false); $("results").innerHTML=""; lastEval=null; refresh(); };
+addEventListener("hashchange", handleHash);
+$("formation").onchange = e => {
+  const name = e.target.value; if(!FORMATIONS[name]) return;
+  commit();
+  const r = reseat(S.squad, S.locks, S.slots, FORMATIONS[name].slots);
+  S.formation = name; S.slots = FORMATIONS[name].slots.slice(); S.squad = r.squad; S.locks = r.locks;
+  $("results").innerHTML = ""; refresh();
+};
+$("clear").onclick = () => { commit(); S.squad = Array(11).fill(null); S.locks = Array(11).fill(false); $("results").innerHTML=""; lastEval=null; refresh(); };
+$("undo").onclick = undo; $("redo").onclick = redo;
+addEventListener("keydown", e => {
+  if(!(e.ctrlKey||e.metaKey) || document.querySelector("dialog[open]")) return;
+  if(e.target.closest("input,textarea,select")) return;
+  const k = e.key.toLowerCase();
+  if(k==="z" && !e.shiftKey){ e.preventDefault(); undo(); }
+  else if(k==="y" || (k==="z" && e.shiftKey)){ e.preventDefault(); redo(); }
+});
 $("pitch").addEventListener("click", e => {
-  const lk = e.target.closest("[data-lock]"); if(lk){ const i=+lk.dataset.lock; S.locks[i]=!S.locks[i]; refresh(); return; }
+  const lk = e.target.closest("[data-lock]"); if(lk){ commit(); const i=+lk.dataset.lock; S.locks[i]=!S.locks[i]; refresh(); return; }
   if(e.target.closest(".posSel")) return;
   const pk = e.target.closest("[data-pick]"); if(pk) openPicker(+pk.dataset.pick);
 });
-$("pitch").addEventListener("change", e => { const s = e.target.closest(".posSel"); if(s){ S.slots[+s.dataset.i] = s.value; refresh(); } });
+$("pitch").addEventListener("change", e => { const s = e.target.closest(".posSel"); if(s){ commit(); S.slots[+s.dataset.i] = s.value; refresh(); } });
 $("dlgClose").onclick = () => $("dlg").close();
-$("q").oninput = () => { clearTimeout(searchTimer); searchTimer = setTimeout(doSearch, 200); };
+$("dlg").addEventListener("close", () => { fillMode = false; highlightSlot(-1); });
+$("q").oninput = () => { clearTimeout(searchTimer); searchTimer = setTimeout(doSearch, 150); };
+$("q").addEventListener("keydown", e => {
+  if(e.key==="ArrowDown" || e.key==="ArrowUp"){
+    e.preventDefault(); if(!hitCache.length) return;
+    hl = (hl + (e.key==="ArrowDown"?1:-1) + hitCache.length) % hitCache.length; renderHits();
+  } else if(e.key==="Enter"){
+    e.preventDefault();
+    clearTimeout(searchTimer);
+    const q = $("q").value.trim();
+    // Enter straight after typing: wait for this search's results, then pick the highlighted card
+    const go = () => { if(hitCache[hl]) setCard(hitCache[hl]); };
+    if(q && q !== hitQuery) doSearch().then(go); else go();
+  }
+});
 $("live").onchange = doSearch;
 $("hits").addEventListener("click", e => { const h = e.target.closest("[data-hit]"); if(h) setCard(hitCache[+h.dataset.hit]); });
 $("cAdd").onclick = () => {
@@ -415,27 +753,13 @@ $("cAdd").onclick = () => {
     a:$("cAlt").value.split(",").map(x=>x.trim().toUpperCase()).filter(Boolean), ni:+$("cNat").value, nn:nat?nat[1]:"", li:+$("cLg").value, ln:lg?lg[1]:"",
     ck:(cl&&!ty)?String(cl[0]):null, cn:(cl&&!ty)?cl[1]:null, ty, bp:"custom:"+nm.toLowerCase(), fc:!!ty, xc:0,xl:0,xn:0,xsl:false,xsn:false});
 };
-$("mNation").onchange = e => { S.mgr.ni = e.target.value===""?null:+e.target.value; refresh(); };
-$("mLeague").onchange = e => { S.mgr.li = e.target.value===""?null:+e.target.value; refresh(); };
-$("mFree").onchange = e => { S.mgr.li_free = e.target.checked; $("mLeague").disabled = e.target.checked; refresh(); };
-$("impBtn").onclick = () => { $("impOut").innerHTML = ""; $("impMsg").textContent = ""; $("impDlg").showModal(); $("impText").focus(); };
+$("mNation").onchange = e => { commit(); S.mgr.ni = e.target.value===""?null:+e.target.value; refresh(); };
+$("mLeague").onchange = e => { commit(); S.mgr.li = e.target.value===""?null:+e.target.value; refresh(); };
+$("mFree").onchange = e => { commit(); S.mgr.li_free = e.target.checked; $("mLeague").disabled = e.target.checked; refresh(); };
+$("impBtn").onclick = () => openImport("fgg");
 $("impClose").onclick = () => $("impDlg").close();
-$("impGo").onclick = async () => {
-  const text = $("impText").value; if(!text.trim()) return;
-  $("impMsg").textContent = "Matching…";
-  try{
-    const r = await api("/api/import_squad", {text, slots:S.slots});
-    r.squad.forEach((c,i) => { if(c) S.squad[i] = c; });
-    const filled = r.squad.filter(Boolean).length;
-    $("impMsg").textContent = `${filled} player${filled===1?"":"s"} placed.`;
-    let h = "";
-    if(r.unmatched.length) h += `<div class="note bad">Not found: ${r.unmatched.map(esc).join(", ")}</div>`;
-    if(r.notes.length) h += `<div class="note warn">${r.notes.map(esc).join("<br>")}</div>`;
-    $("impOut").innerHTML = h; $("results").innerHTML = ""; refresh();
-  }catch(e){ $("impMsg").textContent = e.message; }
-};
-$("gameTotal").oninput =e => { S.game = e.target.value; renderTotal(); save(); };
-for(const id of ["maxDrop","minRating","gender","maxSteps","clubList","xIcon","xHero","xHof"]) $(id).addEventListener("change", save);
+$("gameTotal").oninput = e => { S.game = e.target.value; renderTotal(); save(); };
+for(const id of ["maxDrop","minRating","gender","maxSteps","clubList","xIcon","xHero","xHof","maxPrice","incUnk","priceList"]) $(id).addEventListener("change", save);
 $("go").onclick = runOptimize;
 $("results").addEventListener("click", e => {
   const R = window.__R; if(!R) return;
@@ -447,7 +771,7 @@ $("diag").onclick = async () => {
   $("syncMsg").textContent = "testing…";
   try{
     const r = await api("/api/diag");
-    $("syncMsg").innerHTML = r.map(x => `<div style="color:var(${x.ok?"--ok,#3ecf8e":"--bad"})">${x.ok?"OK":"FAIL"} · ${esc(x.step)}: ${esc(x.detail)}</div>`).join("");
+    $("syncMsg").innerHTML = r.map(x => `<div style="color:var(${x.ok?"--ok":"--bad"})">${x.ok?"OK":"FAIL"} · ${esc(x.step)}: ${esc(x.detail)}</div>`).join("");
   }catch(e){ $("syncMsg").textContent = "Can't reach the local app server: "+e.message; }
 };
 $("sync").onclick = async () => {

@@ -4,7 +4,11 @@
   python chem_builder.py              start the app at http://127.0.0.1:8765
   python chem_builder.py --sync       refresh cards.json from FUT.GG first (then start)
   python chem_builder.py --sync-only  refresh and exit
-  options: --min-rating 75  --port 8765  --no-browser
+  options: --min-rating 75  --port 8765  --no-browser  --stay (don't stop when the last app tab closes)
+
+Started with pythonw (what start.bat does) there is no console window: output goes to chem_builder.log,
+the app stops by itself shortly after its last browser tab is closed, and starting it again while it is
+already running just opens the page.
 
 Card data comes from FUT.GG's public JSON feed (the same one its own player list uses).
 It is fetched politely (one request every ~0.4 s) and cached in cards.json next to this file.
@@ -31,9 +35,53 @@ CACHE = os.path.join(HERE, "cards.json")
 UI = os.path.join(HERE, "ui.html")
 API = "https://www.fut.gg/api/fut/players/v2/27/"
 UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0 Safari/537.36"
+LOG = os.path.join(HERE, "chem_builder.log")
 PSEUDO_CLUBS = {"ICON", "HERO", "HALL OF FUT"}
 
-STATE = {"cards": [], "meta": {}, "by_slug": {}, "sync": {"running": False, "msg": "", "done": 0, "total": 0}}
+STATE = {"cards": [], "meta": {}, "by_slug": {}, "by_bp": {}, "sync": {"running": False, "msg": "", "done": 0, "total": 0}}
+
+# ------------------------------------------------------------------ formations
+# FC 27 Ultimate Team formations, copied from FUT.GG's squad-builder data (8 Oct 2026). The list matches
+# FIFPlay's FC 27 Ultimate Team list, plus 4-4-1-1, which FIFPlay leaves out but FUT.GG's tactics stats
+# show pros using. Slots are FUT.GG "unique position" ids in FUT.GG's positionIdx order, so slot k of a
+# FUT.GG squad is slot k here. FC 25+ has no LWB/RWB/CF: 5-back formations use RB/LB.
+UNIQUE_POS = {0: "GK", 3: "RB", 4: "CB", 5: "CB", 6: "CB", 7: "LB", 9: "CDM", 10: "CDM", 11: "CDM",
+              12: "RM", 13: "CM", 14: "CM", 15: "CM", 16: "LM", 17: "CAM", 18: "CAM", 19: "CAM",
+              23: "RW", 24: "ST", 25: "ST", 26: "ST", 27: "LW"}
+FORMATION_DATA = [  # (FUT.GG formation id, name, unique position ids)
+    (22, "3-1-4-2", (0, 4, 5, 6, 10, 12, 13, 15, 16, 24, 26)),
+    (23, "3-4-1-2", (0, 4, 5, 6, 12, 13, 15, 16, 18, 24, 26)),
+    (24, "3-4-2-1", (0, 4, 5, 6, 12, 13, 15, 16, 17, 19, 25)),
+    (25, "3-4-3", (0, 4, 5, 6, 12, 13, 15, 16, 23, 25, 27)),
+    (27, "3-5-2", (0, 4, 5, 6, 9, 11, 12, 16, 18, 24, 26)),
+    (14, "4-1-2-1-2", (0, 3, 4, 6, 7, 10, 12, 16, 18, 24, 26)),
+    (15, "4-1-2-1-2 (2)", (0, 3, 4, 6, 7, 10, 13, 15, 18, 24, 26)),
+    (1, "4-1-3-2", (0, 3, 4, 6, 7, 10, 12, 14, 16, 24, 26)),
+    (2, "4-1-4-1", (0, 3, 4, 6, 7, 10, 12, 13, 15, 16, 25)),
+    (36, "4-2-1-3", (0, 3, 4, 6, 7, 9, 11, 18, 23, 25, 27)),
+    (13, "4-2-2-2", (0, 3, 4, 6, 7, 9, 11, 17, 19, 24, 26)),
+    (3, "4-2-3-1", (0, 3, 4, 6, 7, 9, 11, 17, 18, 19, 25)),
+    (4, "4-2-3-1 (2)", (0, 3, 4, 6, 7, 9, 11, 12, 16, 18, 25)),
+    (5, "4-2-4", (0, 3, 4, 6, 7, 13, 15, 23, 24, 26, 27)),
+    (6, "4-3-1-2", (0, 3, 4, 6, 7, 13, 14, 15, 18, 24, 26)),
+    (7, "4-3-2-1", (0, 3, 4, 6, 7, 13, 14, 15, 17, 19, 25)),
+    (8, "4-3-3", (0, 3, 4, 6, 7, 13, 14, 15, 23, 25, 27)),
+    (9, "4-3-3 (2)", (0, 3, 4, 6, 7, 10, 13, 15, 23, 25, 27)),
+    (10, "4-3-3 (3)", (0, 3, 4, 6, 7, 9, 11, 14, 23, 25, 27)),
+    (11, "4-3-3 (4)", (0, 3, 4, 6, 7, 13, 15, 18, 23, 25, 27)),
+    (18, "4-4-1-1", (0, 3, 4, 6, 7, 12, 13, 15, 16, 18, 25)),
+    (16, "4-4-2", (0, 3, 4, 6, 7, 12, 13, 15, 16, 24, 26)),
+    (17, "4-4-2 (2)", (0, 3, 4, 6, 7, 9, 11, 12, 16, 24, 26)),
+    (21, "4-5-1", (0, 3, 4, 6, 7, 12, 14, 16, 17, 19, 25)),
+    (20, "4-5-1 (2)", (0, 3, 4, 6, 7, 12, 13, 14, 15, 16, 25)),
+    (29, "5-2-1-2", (0, 3, 4, 5, 6, 7, 13, 15, 18, 24, 26)),
+    (30, "5-2-3", (0, 3, 4, 5, 6, 7, 13, 15, 23, 25, 27)),
+    (31, "5-3-2", (0, 3, 4, 5, 6, 7, 10, 13, 15, 24, 26)),
+    (33, "5-4-1", (0, 3, 4, 5, 6, 7, 12, 13, 15, 16, 25)),
+]
+FORMATIONS = {name: {"name": name, "fgg": fid, "uids": list(u), "slots": [UNIQUE_POS[x] for x in u]}
+              for fid, name, u in FORMATION_DATA}
+FORMATION_BY_FGG = {fid: name for fid, name, _ in FORMATION_DATA}
 
 
 # ------------------------------------------------------------------ data
@@ -75,6 +123,9 @@ def explain_error(e):
     """Turn a urllib/ssl/socket exception into something that names the actual cause."""
     import ssl
     if isinstance(e, urllib.error.HTTPError):
+        if e.code == 403 and (e.headers or {}).get("cf-mitigated") == "challenge":
+            return ("HTTP 403 - FUT.GG puts this data behind a Cloudflare browser check that only a real browser "
+                    "can pass, so programs (this app included) can't read it. Not a problem on your PC or network.")
         hint = {403: "blocked by FUT.GG or a firewall", 429: "rate limited - wait a minute and retry",
                 404: "endpoint not found (FUT.GG may have changed its feed)"}.get(e.code, "")
         return f"HTTP {e.code} {e.reason}" + (f" - {hint}" if hint else "")
@@ -178,11 +229,21 @@ def load_cache():
     cards = d["cards"]
     for c in cards:
         c["_k"] = fold(c.get("fn") or c["n"]) + " " + fold(c["n"])
-    STATE.update(cards=cards, meta=d.get("meta", {}), by_slug={c["s"]: c for c in cards})
+    by_bp = {}
+    for c in cards:
+        by_bp.setdefault(c["bp"], []).append(c)
+    STATE.update(cards=cards, meta=d.get("meta", {}), by_slug={c["s"]: c for c in cards}, by_bp=by_bp)
 
 
 def public(c):
     return {k: v for k, v in c.items() if k != "_k"}
+
+
+def versions(card, limit=12):
+    """Other cards of the same player (base, specials, ...), best first. Used for the 'wrong version' dropdown."""
+    vs = [c for c in STATE["by_bp"].get(card.get("bp"), []) if c["s"] != card["s"]]
+    vs.sort(key=lambda c: -c["ov"])
+    return [public(c) for c in vs[:limit]]
 
 
 def meta_lists():
@@ -270,8 +331,11 @@ def find_cards(name, rating=None):
 
 
 # ------------------------------------------------------------------ prices (budget filter)
-# FUT.GG's card feed has no prices. Live lookup uses FUT.GG's per-player price endpoint; the path and response
-# shape are NOT verified (Cloudflare blocked the test sandbox with 403) - PENDING VALIDATION from a real PC.
+# FUT.GG's card feed has no prices. Live lookup uses FUT.GG's per-player price endpoint (the path matches FUT.GG's
+# own site code, Oct 2026). Since FC 27 FUT.GG serves it behind a Cloudflare browser challenge (403 with
+# cf-mitigated: challenge, confirmed from a user's PC and from the build sandbox on 8 Oct 2026), so the live
+# lookup normally fails and the budget runs on pasted prices. The lookup stays in case FUT.GG opens it again;
+# Budget stops after the first failure, so a blocked endpoint costs one request per run.
 # Manual prices ("name price" lines) always work and take priority over live lookups.
 PRICE_API = "https://www.fut.gg/api/fut/player-prices/27/{ea}/"
 PRICE_TTL = 3600
@@ -438,10 +502,47 @@ def build_pool(opts):
     return pool, unmatched
 
 
-def import_squad(text, slots):
-    """Turn pasted lines into a squad for the given slot positions."""
-    squad = [None] * len(slots)
-    notes, unmatched = [], []
+def seat(entries, slots):
+    """Best slot for each entry. entries: [(card, wanted_pos|None)], at most len(slots).
+    Exact assignment (bitmask DP, 11 slots = 2048 states): maximise players in a preferred position,
+    then players in the position they asked for, keeping the given order as the tie-break."""
+    n, m = len(entries), len(slots)
+    fits = [[slots[j] in {c["p"], *c["a"]} for j in range(m)] for c, _ in entries]
+    score = [[(100 if fits[i][j] else 0) + (10 if entries[i][1] == slots[j] else 0) for j in range(m)]
+             for i in range(n)]
+    best = {0: (0, [])}
+    for i in range(n):
+        nxt = {}
+        for mask, (sc, picks) in best.items():
+            for j in range(m):
+                if mask >> j & 1:
+                    continue
+                cand = (sc + score[i][j], picks + [j])
+                key = mask | 1 << j
+                if key not in nxt or cand[0] > nxt[key][0]:
+                    nxt[key] = cand
+        best = nxt
+    return max(best.values(), key=lambda v: v[0])[1] if n else []
+
+
+def build_preview(entries, slots, extra=None, notes=None, unmatched=None, **more):
+    """Turn [(card, wanted_pos, source_text)] into slot rows the UI shows before anything is changed."""
+    notes, unmatched = list(notes or []), list(unmatched or [])
+    starters, extra = entries[:len(slots)], list(extra or []) + [e[0] for e in entries[len(slots):]]
+    picks = seat([(c, w) for c, w, _ in starters], slots)
+    rows = [{"slot": j, "card": None, "alts": [], "src": ""} for j in range(len(slots))]
+    for (c, _, src), j in zip(starters, picks):
+        rows[j].update(card=public(c), alts=versions(c), src=src)
+    if len(entries) > len(slots):
+        notes.append(f"{len(entries)} players found; the first {len(slots)} were placed. "
+                     "The others are listed in each slot's dropdown if you want to swap one in.")
+    return {"slots": slots, "rows": rows, "extra": [public(c) for c in extra], "notes": notes,
+            "unmatched": unmatched, **more}
+
+
+def preview_text(text, slots):
+    """Pasted lines -> preview. Rating picks the version; a position puts the player in that slot."""
+    entries, notes, unmatched = [], [], []
     for ln in [x for x in text.splitlines() if x.strip()]:
         p = parse_line(ln)
         if not p:
@@ -450,33 +551,129 @@ def import_squad(text, slots):
         if not hits:
             unmatched.append(ln.strip())
             continue
-        free = [i for i, c in enumerate(squad) if c is None]
-        if not free:
-            notes.append(f"More than {len(slots)} players pasted; ignored: {ln.strip()}")
-            continue
-
-        def fits(c, i):
-            return slots[i] in {c["p"], *c["a"]}
         want = p["pos"]
-        # candidates ordered: playable in the requested/free slots first, then higher rating
-        hits.sort(key=lambda c: (-(any(fits(c, i) for i in free)), -c["ov"]))
+        hits.sort(key=lambda c: (-(want in {c["p"], *c["a"]}) if want else 0,
+                                 -any(s in {c["p"], *c["a"]} for s in slots), -c["ov"]))
         card = hits[0]
-        if want:
-            target = next((i for i in free if slots[i] == want), None)
-            if target is not None:
-                alt = [c for c in hits if fits(c, target)]
-                card = alt[0] if alt else card
+        if len({c["bp"] for c in hits}) > 1:
+            notes.append(f"\"{p['name']}\" matches more than one player; picked {card['fn'] or card['n']}. "
+                         "Use the dropdown if that's wrong.")
+        entries.append((card, want, ln.strip()))
+    return build_preview(entries, slots, notes=notes, unmatched=unmatched)
+
+
+def cards_by_ea_ids(ids):
+    """EA ids (as strings) -> ({id: card}, live_error). Missing ones are fetched from FUT.GG by id."""
+    found, missing = {}, []
+    for i in ids:
+        c = STATE["by_slug"].get(f"27-{i}")
+        if c:
+            found[i] = c
         else:
-            target = None
-        if target is None:
-            target = next((i for i in free if fits(card, i)), None)
-        if target is None:
-            target = free[0]
-            notes.append(f"{card['n']} can't play {slots[target]} (preferred: {card['p']}); placed there off-position.")
-        squad[target] = card
-        if len(hits) > 1 and p["rating"] is None:
-            notes.append(f"{p['name']}: {len(hits)} versions found, used the best fit ({card['ov']} {card['rt']}). Add the rating to pick another.")
-    return {"squad": [public(c) if c else None for c in squad], "notes": notes, "unmatched": unmatched}
+            missing.append(i)
+    live_error = None
+    for k in range(0, len(missing), 40):
+        chunk = missing[k:k + 40]
+        try:
+            d = fetch_json(f"{API}?ids={','.join(chunk)}", tries=2)
+            for r in d.get("data", []):
+                c = normalize_card(r)
+                c["live"] = True
+                found[str(r.get("eaId"))] = c
+        except Exception as e:  # noqa: BLE001
+            live_error = str(e)
+    return found, live_error
+
+
+def preview_ids(ids, slots):
+    """EA ids in page order (from the bookmarklet on a FUTBIN squad page) -> preview."""
+    ids = list(dict.fromkeys(i for i in ids if i.isdigit()))[:40]
+    found, live_error = cards_by_ea_ids(ids)
+    entries, seen_bp = [], set()
+    for i in ids:
+        c = found.get(i)
+        if c and c["bp"] not in seen_bp:  # a page can show the same player twice (card + mini card)
+            seen_bp.add(c["bp"])
+            entries.append((c, None, f"card id {i}"))
+    unmatched = [f"card id {i}" for i in ids if i not in found]
+    notes = [f"Live card lookup failed: {live_error}"] if live_error else []
+    return build_preview(entries, slots, notes=notes, unmatched=unmatched)
+
+
+UUID_RE = re.compile(r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}", re.I)
+FGG_SQUAD_API = "https://www.fut.gg/api/squads/{uuid}/"
+
+
+def parse_fgg_squad(d):
+    """FUT.GG /api/squads/<uuid>/ response -> (formation name|None, {positionIdx: eaId}, manager, title, game).
+    Shape read from FUT.GG's squad-builder code (Oct 2026): {"data": {"uuid", "data": {"activeFormationId",
+    "managerNationId", "managerLeagueId", "title", "gameSlug", "activeGroupPositions": [{"group": "FIELD",
+    "positionIdx", "playerEaId", ...}]}}}. Older saves use "activePositions" instead of activeGroupPositions."""
+    outer = d.get("data", d) if isinstance(d, dict) else {}
+    sq = outer.get("data", outer) if isinstance(outer, dict) else {}
+    if not isinstance(sq, dict):
+        raise ValueError("FUT.GG squad response not recognised")
+    pos = sq.get("activeGroupPositions")
+    if pos is None:
+        pos = [dict(p, group="FIELD") for p in sq.get("activePositions") or []]
+    if not isinstance(pos, list):
+        raise ValueError("FUT.GG squad response not recognised (no player positions)")
+    field = {}
+    for p in pos:
+        if p.get("group", "FIELD") == "FIELD" and p.get("playerEaId") and p.get("positionIdx") is not None:
+            field[int(p["positionIdx"])] = str(p["playerEaId"])
+    try:
+        fname = FORMATION_BY_FGG.get(int(sq.get("activeFormationId")))
+    except (TypeError, ValueError):
+        fname = None
+    mgr = {"ni": sq.get("managerNationId"), "li": sq.get("managerLeagueId")}
+    return fname, field, mgr, sq.get("title") or "", str(sq.get("gameSlug") or "")
+
+
+def preview_fgg(url):
+    m = UUID_RE.search(url or "")
+    if not m:
+        raise ValueError("That doesn't look like a FUT.GG squad link (it should contain a long id like "
+                         "1a2b3c4d-....). On FUT.GG open the squad, press Share, and copy the link.")
+    try:
+        d = fetch_json(FGG_SQUAD_API.format(uuid=m.group(0).lower()), tries=2)
+    except RuntimeError as e:
+        if "404" in str(e):
+            raise ValueError("FUT.GG says this squad doesn't exist. Check the link, and make sure the squad "
+                             "is saved on FUT.GG (press Share there, then copy the link).") from None
+        raise
+    fname, field, mgr, title, game = parse_fgg_squad(d)
+    notes = []
+    if game and game not in ("27", "fc27", "fc-27"):
+        notes.append(f"This FUT.GG squad is for game '{game}', not FC 27; cards may not match.")
+    if not fname:
+        notes.append("The squad's formation isn't one this tool knows; players were seated by best fit.")
+    slots = FORMATIONS[fname]["slots"] if fname else None
+    found, live_error = cards_by_ea_ids(list(field.values()))
+    if live_error:
+        notes.append(f"Live card lookup failed: {live_error}")
+    unmatched = [f"card id {i}" for i in field.values() if i not in found]
+    if slots:
+        rows = [{"slot": j, "card": None, "alts": [], "src": "FUT.GG"} for j in range(len(slots))]
+        for idx, ea in field.items():
+            c = found.get(ea)
+            if c and 0 <= idx < len(slots):
+                rows[idx].update(card=public(c), alts=versions(c))
+        res = {"slots": slots, "rows": rows, "extra": [], "notes": notes, "unmatched": unmatched}
+    else:
+        entries = [(found[ea], None, "FUT.GG") for _, ea in sorted(field.items()) if ea in found]
+        res = build_preview(entries, FORMATIONS["4-4-2"]["slots"], notes=notes, unmatched=unmatched)
+        fname = "4-4-2"
+    res.update(formation=fname, mgr=mgr, title=title)
+    return res
+
+
+def cards_for_slugs(slugs):
+    """Share links carry card slugs ("27-<eaId>"). Returns {slug: card} and anything not found."""
+    ids = [s.split("-", 1)[1] for s in slugs if isinstance(s, str) and s.startswith("27-")]
+    found, live_error = cards_by_ea_ids(ids)
+    out = {f"27-{i}": public(c) for i, c in found.items()}
+    return {"cards": out, "missing": [s for s in slugs if s not in out], "live_error": live_error}
 
 
 # ------------------------------------------------------------------ http
@@ -509,7 +706,8 @@ class Handler(BaseHTTPRequestHandler):
             with open(UI, "rb") as f:
                 return self._send(200, f.read(), "text/html")
         if u.path == "/api/meta":
-            return self._send(200, {"meta": STATE["meta"], "n": len(STATE["cards"]), **meta_lists()})
+            return self._send(200, {"meta": STATE["meta"], "n": len(STATE["cards"]), **meta_lists(),
+                                    "formations": list(FORMATIONS.values())})
         if u.path == "/api/search":
             q = (qs.get("q") or [""])[0]
             return self._send(200, search_cards(q, live=(qs.get("live") or ["0"])[0] == "1"))
@@ -526,8 +724,24 @@ class Handler(BaseHTTPRequestHandler):
                 return self._send(200, eng.evaluate(body["slots"], body["squad"], body.get("mgr")))
             if self.path == "/api/optimize":
                 return self._send(200, self.optimize(body))
-            if self.path == "/api/import_squad":
-                return self._send(200, import_squad(body.get("text", ""), body["slots"]))
+            if self.path == "/api/import_preview":
+                mode = body.get("mode")
+                if mode == "fgg":
+                    return self._send(200, preview_fgg(body.get("url", "")))
+                if mode == "ids":
+                    return self._send(200, preview_ids([str(x) for x in body.get("ids") or []], body["slots"]))
+                return self._send(200, preview_text(body.get("text", ""), body["slots"]))
+            if self.path == "/api/cards":
+                return self._send(200, cards_for_slugs(body.get("slugs") or []))
+            if self.path == "/api/ping":
+                LIFE.ping(body.get("tab"))
+                return self._send(200, {"ok": True})
+            if self.path == "/api/bye":
+                LIFE.bye(body.get("tab"))
+                return self._send(200, {"ok": True})
+            if self.path == "/api/quit":
+                threading.Timer(0.3, LIFE.stop).start()
+                return self._send(200, {"ok": True})
             if self.path == "/api/sync":
                 if STATE["sync"]["running"]:
                     return self._send(200, STATE["sync"])
@@ -566,7 +780,82 @@ class Handler(BaseHTTPRequestHandler):
                               **eng.manager_options(slots, final, mgr)}}
 
 
+class Life:
+    """Stops the app once no browser tab has been open for a while, so closing the page closes the app.
+    Tabs ping every 10 s and say bye when closed. Hidden tabs can be throttled to one timer a minute,
+    so a tab only counts as gone after 10 minutes of silence; a bye ends it after GRACE seconds
+    (a page reload says bye and pings again well inside that)."""
+    GRACE, SILENT = 30, 600
+
+    def __init__(self):
+        self.tabs, self.server, self.enabled, self.empty_since, self.seen_any = {}, None, False, None, False
+        self.lock = threading.Lock()
+
+    def ping(self, tab):
+        with self.lock:
+            self.tabs[str(tab)] = time.time()
+            self.empty_since, self.seen_any = None, True
+
+    def bye(self, tab):
+        with self.lock:
+            self.tabs.pop(str(tab), None)
+
+    def stop(self):
+        if self.server:
+            print("Stopping (no app tab open).", flush=True)
+            threading.Thread(target=self.server.shutdown, daemon=True).start()
+
+    def watch(self):
+        while True:
+            time.sleep(5)
+            if not (self.enabled and self.seen_any):  # never stop before a page has connected once
+                continue
+            now = time.time()
+            with self.lock:
+                for t, seen in list(self.tabs.items()):
+                    if now - seen > self.SILENT:
+                        del self.tabs[t]
+                if self.tabs:
+                    self.empty_since = None
+                    continue
+                self.empty_since = self.empty_since or now
+                if now - self.empty_since < self.GRACE:
+                    continue
+            self.stop()
+            return
+
+
+LIFE = Life()
+
+
+def windowless():
+    """True under pythonw (start.bat), where there is no console to print to."""
+    return sys.stdout is None or sys.stderr is None
+
+
+def fatal(msg):
+    print(msg, file=sys.stderr, flush=True)
+    if os.name == "nt" and windowless():
+        try:
+            import ctypes
+            ctypes.windll.user32.MessageBoxW(None, msg + f"\n\nDetails: {LOG}", "Chem Builder", 0x10)
+        except Exception:  # noqa: BLE001
+            pass
+    sys.exit(1)
+
+
+def already_running(port):
+    """Is a Chem Builder already answering on this port?"""
+    try:
+        with urllib.request.urlopen(f"http://127.0.0.1:{port}/api/meta", timeout=3) as r:
+            return "formations" in json.load(r)
+    except Exception:  # noqa: BLE001
+        return False
+
+
 def main():
+    if windowless():  # pythonw: keep a log instead of printing into nothing
+        sys.stdout = sys.stderr = open(LOG, "w", encoding="utf-8", buffering=1)
     ap = argparse.ArgumentParser()
     ap.add_argument("--check", action="store_true", help="test cards.json and the FUT.GG connection, then exit")
     ap.add_argument("--sync", action="store_true")
@@ -574,6 +863,7 @@ def main():
     ap.add_argument("--min-rating", type=int, default=75)
     ap.add_argument("--port", type=int, default=8765)
     ap.add_argument("--no-browser", action="store_true")
+    ap.add_argument("--stay", action="store_true", help="keep running after the last app tab is closed")
     a = ap.parse_args()
     if a.check:
         load_cache()
@@ -590,15 +880,27 @@ def main():
             print(f"  {st.get('done', 0)}/{st.get('total', '?')} {st.get('msg', '')}", flush=True)
         print(st.get("msg"))
         if not os.path.exists(CACHE):
-            sys.exit("Sync failed and there is no cards.json. Run: python chem_builder.py --check")
+            fatal("Card data sync failed and there is no cards.json. Run: python chem_builder.py --check")
         if a.sync_only:
             return
+    url = f"http://127.0.0.1:{a.port}/"
+    if already_running(a.port):  # second double-click: just show the app that is already running
+        print(f"Chem Builder is already running - opening {url}")
+        if not a.no_browser:
+            webbrowser.open(url)
+        return
     load_cache()
     if not STATE["cards"]:
-        sys.exit("No card data. Run: python chem_builder.py --sync")
-    srv = ThreadingHTTPServer(("127.0.0.1", a.port), Handler)
-    url = f"http://127.0.0.1:{a.port}/"
+        fatal("No card data. Run: python chem_builder.py --sync")
+    try:
+        srv = ThreadingHTTPServer(("127.0.0.1", a.port), Handler)
+    except OSError as e:
+        fatal(f"Port {a.port} is in use by another program ({e}). Close it or start with --port 8766.")
+    LIFE.server, LIFE.enabled = srv, not (a.stay or a.no_browser)
+    threading.Thread(target=LIFE.watch, daemon=True).start()
     print(f"{len(STATE['cards'])} cards loaded (synced {STATE['meta'].get('synced_at', '?')}). Open {url}  (Ctrl+C to stop)")
+    if LIFE.enabled:
+        print("The app stops by itself about 30 s after its last browser tab is closed.")
     if not a.no_browser:
         threading.Timer(0.6, lambda: webbrowser.open(url)).start()
     try:

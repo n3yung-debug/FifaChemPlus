@@ -164,11 +164,67 @@ def test_parse_line():
     assert cb.parse_line("   ") is None
 
 
-def test_import_squad():
+def test_import_preview_text():
     cb.load_cache()
-    r = cb.import_squad("GK Alisson\nnot a real playerzzz", ["GK", "ST"])
-    assert r["squad"][0] and r["squad"][0]["p"] == "GK"
+    r = cb.preview_text("ST Mbappe 91\nGK Alisson\nnot a real playerzzz", ["GK", "ST"])
+    assert r["rows"][0]["card"]["p"] == "GK" and r["rows"][1]["card"]["n"].startswith("Mbapp")
     assert r["unmatched"] == ["not a real playerzzz"]
+    assert any(a["bp"] == r["rows"][1]["card"]["bp"] for a in r["rows"][1]["alts"])  # other Mbappé versions offered
+
+
+def test_seat_puts_everyone_in_position():
+    slots = ["GK", "ST", "CB", "LB"]
+    entries = [(card(1, "ST"), None), (card(2, "LB", alts=("CB",)), None), (card(3, "CB"), None), (card(4, "GK"), None)]
+    picks = cb.seat(entries, slots)
+    assert [slots[j] for j in picks] == ["ST", "LB", "CB", "GK"]
+    # asked-for position wins a tie between two valid slots
+    picks = cb.seat([(card(1, "CB", alts=("LB",)), "LB"), (card(2, "CB", alts=("LB",)), None)], ["CB", "LB"])
+    assert picks == [1, 0]
+
+
+def test_formations_table():
+    assert len(cb.FORMATIONS) == 29
+    for f in cb.FORMATIONS.values():
+        assert len(f["slots"]) == 11 and f["slots"][0] == "GK" and f["slots"].count("GK") == 1
+        assert not {"LWB", "RWB", "CF"} & set(f["slots"])
+    assert sorted(cb.FORMATIONS["4-2-1-3"]["slots"]) == sorted(["GK", "RB", "CB", "CB", "LB", "CDM", "CDM", "CAM", "RW", "ST", "LW"])
+
+
+def test_fgg_squad_import():
+    cb.load_cache()
+    ids = {0: "212831", 9: "231747", 10: "37576"}  # Alisson GK, Mbappé ST, Ronaldo (ICON) ST in 4-4-2
+    fake_resp = {"data": {"uuid": "x", "data": {"activeFormationId": "16", "managerNationId": 18, "managerLeagueId": 53,
+                 "gameSlug": "27", "title": "Weekend League", "activeGroupPositions":
+                 [{"group": "FIELD", "positionIdx": k, "playerEaId": int(v)} for k, v in ids.items()] +
+                 [{"group": "SUBSTITUTE", "positionIdx": 0, "playerEaId": 1}]}}}
+    real = cb.fetch_json
+    calls = []
+    cb.fetch_json = lambda url, tries=4: calls.append(url) or (fake_resp if "/squads/" in url else {"data": []})
+    try:
+        r = cb.preview_fgg("https://www.fut.gg/27/squad-builder/0a1b2c3d-1111-2222-3333-444455556666/")
+    finally:
+        cb.fetch_json = real
+    assert calls[0] == "https://www.fut.gg/api/squads/0a1b2c3d-1111-2222-3333-444455556666/"
+    assert r["formation"] == "4-4-2" and r["mgr"] == {"ni": 18, "li": 53} and r["title"] == "Weekend League"
+    assert r["rows"][9]["card"]["s"] == "27-231747" and r["rows"][10]["card"]["s"] == "27-37576"
+    assert r["rows"][1]["card"] is None  # empty slot stays empty
+    try:
+        cb.preview_fgg("https://www.fut.gg/27/squad-builder/")
+        assert False
+    except ValueError:
+        pass
+
+
+def test_ids_import_dedupes_and_seats():
+    cb.load_cache()
+    real = cb.fetch_json
+    cb.fetch_json = lambda url, tries=4: {"data": []}  # unknown id: live lookup finds nothing
+    try:
+        r = cb.preview_ids(["231747", "231747", "37576", "999999999"], ["ST", "GK"])
+    finally:
+        cb.fetch_json = real
+    assert [x["card"]["s"] for x in r["rows"]] == ["27-231747", "27-37576"]  # duplicate id placed once
+    assert r["unmatched"] == ["card id 999999999"]
 
 
 def _opt_body(**opts):
