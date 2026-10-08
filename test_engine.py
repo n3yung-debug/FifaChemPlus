@@ -172,6 +172,18 @@ def test_manager_nation_options():
     assert o["options"][0]["ni"] == 5 and o["options"][0]["d"] == 4  # Spain-style 4 -> 5: each of 4 goes 1 -> 2
 
 
+def test_manager_suggestions_cover_nation_and_league():
+    # 4 from nation 5 (league 9 x2 + others); manager nation 1 / league 0 helps nobody
+    sq = squad_of(ni=[5] * 4 + list(range(20, 27)), li=[9, 9] + list(range(30, 39)), ck=[None] * 11)
+    s = eng.manager_suggestions(SLOTS, sq, {"ni": 1, "li": 0, "li_free": False})
+    best = s[0]
+    assert best["ni"] == 5 and best["li"] == 9 and best["nation"] and best["league"]
+    assert best["d"] == 4 + 2  # nation 4->5: four players +1; league 2->3: two players +1
+    league_only = [o for o in s if not o["nation"]]
+    assert league_only and league_only[0]["li"] == 9 and league_only[0]["d"] == 2
+    assert eng.manager_suggestions(SLOTS, sq, {"ni": 5, "li": 9, "li_free": False}) == []  # already best
+
+
 def test_parse_line():
     assert cb.parse_line("1. ST Mbappe 91")["name"] == "Mbappe"
     p = cb.parse_line("Mbappe 91 ST")

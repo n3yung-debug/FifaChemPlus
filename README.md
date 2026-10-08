@@ -11,7 +11,7 @@ If something goes wrong, run **start_console.bat** instead (it shows the message
 1. Install Python 3.9+ (standard library only, nothing else to install).
 2. Or in this folder: `python chem_builder.py`  (opens http://127.0.0.1:8765; `--stay` keeps it running after the tab closes)
 3. Card data refresh: click **Update card data** in the app, or `python chem_builder.py --sync`
-   (default: all cards rated 75+; `--min-rating 70` for more). cards.json here is a snapshot from 2026-10-08.
+   (default: all cards rated 75+; `--min-rating 70` for more). cards.json here is a snapshot from 2026-10-08 (includes face stats; older cards.json files need "Update card data" to show them).
 
 ## Use
 - Pick a formation (all 29 FC 27 Ultimate Team formations, taken from FUT.GG's squad builder), or edit any slot's position dropdown.
@@ -27,7 +27,8 @@ If something goes wrong, run **start_console.bat** instead (it shows the message
 - EA's FC Community API (the official club import used by FUTBIN, FUT.GG and FUTWIZ) is only open to those approved sites, so this tool goes through them and never logs in to EA.
 - 🔒 locks a slot: it is never swapped, but still counts for everyone else's links.
 - Results are ranked by chemistry gained, then the highest overall of the incoming card. A FUT.GG score is shown only when the feed provides one (it is empty for FC 27 so far) and is never used for ranking.
-- "Find chemistry upgrades" gives a step-by-step plan, ranked single swaps, and two-swap combos.
+- "Find chemistry upgrades" gives manager changes (new manager nation, League Modifier, or both, each with Apply), a step-by-step plan, ranked single swaps, and two-swap combos.
+- Every suggested card shows its face stats (PAC SHO PAS DRI DEF PHY, or the GK six) and a link to its exact FUT.GG page, where you can check the live price in your browser. The picker shows the same.
 - Type the squad chemistry your game shows into "game shows" — the tool tells you if its rules agree.
 - "Only use cards I own": paste card names (one per line, optional rating: `Alisson 87`) to restrict the pool.
   Without it, the search covers every card in the database (ICONs included — tick "exclude ICONs" if you don't have any).

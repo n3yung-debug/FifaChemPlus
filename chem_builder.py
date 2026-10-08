@@ -116,7 +116,20 @@ def normalize_card(r):
         "xc": int(r.get("extraClubChemistry") or 0), "xl": int(r.get("extraLeagueChemistry") or 0),
         "xn": int(r.get("extraNationChemistry") or 0),
         "xsl": bool(r.get("extraSquadLeagueChemistry")), "xsn": bool(r.get("extraSquadNationChemistry")),
+        "fs": face_stats(r),
     }
+
+
+OUTFIELD_FACE = ("facePace", "faceShooting", "facePassing", "faceDribbling", "faceDefending", "facePhysicality")
+GK_FACE = ("gkFaceDiving", "gkFaceHandling", "gkFaceKicking", "gkFaceReflexes", "gkFaceSpeed", "gkFacePositioning")
+
+
+def face_stats(r):
+    """The six numbers printed on the card: PAC SHO PAS DRI DEF PHY, or DIV HAN KIC REF SPE POS for keepers."""
+    v2 = r.get("faceStatsV2") or {}
+    keys = GK_FACE if r.get("position") == "GK" else OUTFIELD_FACE
+    vals = [v2.get(k) for k in keys]
+    return [int(x) for x in vals] if all(isinstance(x, (int, float)) and x > 0 for x in vals) else None
 
 
 def explain_error(e):
@@ -777,7 +790,9 @@ class Handler(BaseHTTPRequestHandler):
                 "mgr_now": {"li": eng.evaluate(slots, squad, mgr)["mgr_li"],
                             **eng.manager_options(slots, squad, mgr)},
                 "mgr_after": {"li": eng.evaluate(slots, final, mgr)["mgr_li"],
-                              **eng.manager_options(slots, final, mgr)}}
+                              **eng.manager_options(slots, final, mgr)},
+                "mgr_suggest": eng.manager_suggestions(slots, squad, mgr),
+                "mgr_suggest_after": eng.manager_suggestions(slots, final, mgr)}
 
 
 class Life:

@@ -146,6 +146,43 @@ def manager_options(slots, squad, mgr, top=8):
     return {"current": cur, "no_nation": none_total, "options": out[:top]}
 
 
+def manager_suggestions(slots, squad, mgr, top=6):
+    """Manager changes that raise squad chemistry: a manager of another nation (new manager card), another
+    league (League Modifier item, or a manager from that league), or both. Only nations/leagues already in
+    the squad can help. With li_free the league is picked automatically, so only the nation varies."""
+    mgr = dict(mgr or {})
+    cur = total_only(slots, squad, mgr)
+    _, cur_li = _manager_rows(slots, squad, mgr)
+    nations = {c["ni"]: c.get("nn") for c in squad if c is not None}
+    leagues = {c["li"]: c.get("ln") for c in squad if c is not None}
+    out = []
+    for ni in set(nations) | {mgr.get("ni")}:
+        if ni is None:
+            continue
+        cands = [None] if mgr.get("li_free") else list(set(leagues) | {cur_li})
+        for li in cands:
+            m = dict(mgr, ni=ni) if mgr.get("li_free") else dict(mgr, ni=ni, li=li)
+            t = total_only(slots, squad, m)
+            if t <= cur:
+                continue
+            _, used = _manager_rows(slots, squad, m)
+            out.append({"ni": ni, "nn": nations.get(ni), "li": used, "ln": leagues.get(used), "total": t, "d": t - cur,
+                        "nation": ni != mgr.get("ni"), "league": used != cur_li and not mgr.get("li_free")})
+    # drop options a simpler change already matches (e.g. new nation + new league = new nation alone)
+    def simpler(o, p):
+        return (p["nation"] <= o["nation"] and p["league"] <= o["league"] and (p["nation"], p["league"]) != (o["nation"], o["league"])
+                and (not p["nation"] or p["ni"] == o["ni"]) and (not p["league"] or p["li"] == o["li"]))
+    out = [o for o in out if not any(simpler(o, p) and p["total"] >= o["total"] for p in out)]
+    # most chemistry first; on a tie the cheaper change (league item only < new manager < both)
+    key = lambda o: (-o["total"], o["nation"] * 2 + o["league"], str(o["nn"]), str(o["ln"]))  # noqa: E731
+    out.sort(key=key)
+    # always show the best of each kind (league item only / new manager only / both), then the rest
+    firsts = [next(o for o in out if (o["nation"], o["league"]) == k) for k in ((False, True), (True, False), (True, True))
+              if any((o["nation"], o["league"]) == k for o in out)]
+    rest = [o for o in out if all(o is not f for f in firsts)]
+    return sorted(firsts + rest[:max(0, top - len(firsts))], key=key)
+
+
 # --------------------------------------------------------------------------- search
 
 def index_pool(pool):

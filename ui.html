@@ -60,6 +60,8 @@ dialog::backdrop{background:#000a}
 .pv select{width:100%}
 .banner{background:#5a1f1f;color:#fff;padding:10px 14px;font:14px system-ui}
 .bm{display:inline-block;padding:6px 10px;border-radius:6px;background:var(--acc);color:#04101f;font-weight:700;text-decoration:none}
+.fs{color:var(--txt);letter-spacing:.2px} .fs b{color:var(--gold)}
+a.ext{color:var(--acc);font-size:12px;text-decoration:none;margin-left:6px} a.ext:hover{text-decoration:underline}
 .hdrgrp{display:flex;gap:6px;align-items:center;flex-wrap:wrap}
 </style>
 </head>
@@ -312,6 +314,15 @@ function diamonds(n){
   const full = "◆".repeat(n), empty = "◇".repeat(3-n);
   return `<span class="dia ${n===0?'z':''}">${full}${empty}</span>`;
 }
+const FACE = ["PAC","SHO","PAS","DRI","DEF","PHY"], FACE_GK = ["DIV","HAN","KIC","REF","SPE","POS"];
+function faceStats(c){
+  if(!c.fs) return "";
+  const lab = c.p==="GK" ? FACE_GK : FACE;
+  return `<span class="fs">${c.fs.map((v,k)=>`<b>${v}</b> ${lab[k]}`).join(" · ")}</span>`;
+}
+// FUT.GG card page for this exact version (FUT.GG redirects /players/<base id>/<card slug>/ to the full page)
+const cardUrl = c => /^\d+-\d+$/.test(String(c.s)) && c.bp ? `https://www.fut.gg/players/${encodeURIComponent(c.bp)}/${encodeURIComponent(c.s)}/` : "";
+function cardLink(c){ const u = cardUrl(c); return u ? ` <a class="ext" href="${u}" target="_blank" rel="noopener" title="Open this card on FUT.GG (price, stats)">FUT.GG ↗</a>` : ""; }
 function typeTag(c){ return c.ty==="icon"?"ICON":c.ty==="hero"?"HERO":c.ty==="hof"?"HoF":""; }
 function cardLine(c){ return `${esc(c.nn||"?")} · ${esc(c.ln||"?")}${c.cn?" · "+esc(c.cn):""}`; }
 
@@ -393,7 +404,7 @@ function highlightSlot(i){
 }
 function hitHtml(c, k){
   const okPos = fits(c, S.slots[pickIdx]);
-  return `<div class="hit ${k===hl?"hl":""}" data-hit="${k}"><div><strong>${c.ov}</strong> ${esc(c.n)} <span class="mut">${esc(c.p)}${c.a&&c.a.length?" / "+esc(c.a.join(", ")):""}</span>${typeTag(c)?`<span class="tag">${typeTag(c)}</span>`:""}${c.live?`<span class="tag">live</span>`:""}${okPos?"":`<span class="tag" style="color:var(--bad)">off-position</span>`}<div class="small mut">${esc(c.rt)} · ${cardLine(c)}${c.g===2?" · women":""}</div></div></div>`;
+  return `<div class="hit ${k===hl?"hl":""}" data-hit="${k}"><div><strong>${c.ov}</strong> ${esc(c.n)} <span class="mut">${esc(c.p)}${c.a&&c.a.length?" / "+esc(c.a.join(", ")):""}</span>${typeTag(c)?`<span class="tag">${typeTag(c)}</span>`:""}${c.live?`<span class="tag">live</span>`:""}${okPos?"":`<span class="tag" style="color:var(--bad)">off-position</span>`}<div class="small mut">${esc(c.rt)} · ${cardLine(c)}${c.g===2?" · women":""}${cardLink(c)}</div><div class="small">${faceStats(c)}</div></div></div>`;
 }
 let hitCache = [], hitQuery = "", liveError = null;
 function renderHits(){
@@ -438,7 +449,7 @@ $("pitch").addEventListener("dragend", () => { dragFrom = -1; document.querySele
 /* ---------- optimizer ---------- */
 function swapHtml(s){
   const a=s.out, b=s.in;
-  return `<div><span class="tag">${esc(S.slots[s.slot])}</span><span class="mut">${a.ov} ${esc(a.n)}</span><span class="arrow">→</span><strong>${b.ov} ${esc(b.n)}</strong>${typeTag(b)?`<span class="tag">${typeTag(b)}</span>`:""}${b.gg?`<span class="tag" title="FUT.GG score - display only, not used for ranking">GG ${b.gg}</span>`:""}${priceTag(b)}<div class="small mut">${cardLine(b)}${b.g===2?" · women":""}</div></div>`;
+  return `<div><span class="tag">${esc(S.slots[s.slot])}</span><span class="mut">${a.ov} ${esc(a.n)}</span><span class="arrow">→</span><strong>${b.ov} ${esc(b.n)}</strong>${typeTag(b)?`<span class="tag">${typeTag(b)}</span>`:""}${b.gg?`<span class="tag" title="FUT.GG score - display only, not used for ranking">GG ${b.gg}</span>`:""}${priceTag(b)}${cardLink(b)}<div class="small mut">${esc(b.rt)} · ${cardLine(b)}${b.g===2?" · women":""}</div><div class="small">${faceStats(b)}</div></div>`;
 }
 function priceTag(c){
   const p = window.__R && window.__R.budget && window.__R.budget.prices && window.__R.budget.prices[c.s];
@@ -461,16 +472,19 @@ function renderResults(r){
   let h = `<div class="panel" style="margin-top:14px"><div class="small mut">Searched ${r.pool.toLocaleString()} candidate cards. Current ${r.base}/33.</div>`;
   h += budgetNote(r);
   if(r.unmatched && r.unmatched.length) h += `<div class="note warn">Not found in the database: ${r.unmatched.map(esc).join(", ")}</div>`;
-  const mgrBlock = (label, m) => {
-    const better = (m.options||[]).filter(o => o.d > 0).slice(0,5);
-    let s = `<div class="small" style="margin-top:4px"><strong>${label}</strong>: ${m.current}/33 with ${S.mgr.ni==null?"no manager nation":esc(nationName(S.mgr.ni))}`;
-    if(S.mgr.li_free && m.li != null) s += `, manager league set to ${esc(leagueName(m.li))}`;
-    s += `.`;
-    if(better.length) s += ` A different manager nation would give: ` + better.map(o => `${esc(o.nn)} <span class="chip pos">${o.total}/33 (+${o.d})</span>`).join(" ");
-    else s += S.mgr.ni==null ? ` No manager nation would add chemistry here.` : ` Your manager's nation is already the best choice for this squad.`;
-    return s + `</div>`;
+  const mgrRow = (o, k, now) => {
+    const what = [];
+    if(o.nation) what.push(`Manager from <b>${esc(o.nn || nationName(o.ni))}</b> <span class="mut">(new manager card)</span>`);
+    if(o.league) what.push(`League <b>${esc(o.ln || leagueName(o.li))}</b> <span class="mut">(League Modifier, or a manager from that league)</span>`);
+    if(!o.league && S.mgr.li_free && o.li != null) what.push(`<span class="mut">league set to ${esc(o.ln || leagueName(o.li))}</span>`);
+    return `<div class="res"><div style="flex:1">${what.join(" + ")}</div><div style="text-align:right">${chip(o.d)}<div class="small mut">${o.total}/33</div>${now?`<button class="sm" data-mgr="${k}">Apply</button>`:""}</div></div>`;
   };
-  h += `<h3 style="margin:12px 0 4px">Manager</h3>` + mgrBlock("Current squad", r.mgr_now) + mgrBlock("After the plan below", r.mgr_after);
+  h += `<h3 style="margin:12px 0 4px">Manager changes</h3>`;
+  const ms = r.mgr_suggest || [];
+  h += `<div class="small mut">Current manager: ${S.mgr.ni==null?"no nation set":esc(nationName(S.mgr.ni))}${r.mgr_now && r.mgr_now.li!=null?` · ${esc(leagueName(r.mgr_now.li))}`:""} → ${r.base}/33.</div>`;
+  h += ms.length ? ms.map((o,k)=>mgrRow(o,k,true)).join("") : `<div class="mut small">No manager change raises chemistry — your manager is already the best choice for this squad.</div>`;
+  const ma = (r.mgr_suggest_after || []).slice(0,3);
+  if(r.chain.length && ma.length) h += `<div class="small mut" style="margin-top:6px">After the plan below, a manager change could add more:</div>` + ma.map((o,k)=>mgrRow(o,k,false)).join("");
   h += `<h3 style="margin:12px 0 4px">Best step-by-step plan</h3>`;
   if(!r.chain.length) h += `<div class="mut small">No swap improves chemistry with the current locks and filters (try raising "max rating drop" or unlocking players).</div>`;
   else{
@@ -764,6 +778,12 @@ $("go").onclick = runOptimize;
 $("results").addEventListener("click", e => {
   const R = window.__R; if(!R) return;
   if(e.target.id==="applyChain") return applySwaps(R.chain.flatMap(s=>s.swaps));
+  const am = e.target.closest("[data-mgr]");
+  if(am){
+    const o = R.mgr_suggest[+am.dataset.mgr]; commit();
+    S.mgr.ni = o.ni; if(o.league){ S.mgr.li = o.li; }
+    syncMgrInputs(); $("results").innerHTML = ""; refresh(); return;
+  }
   const a1 = e.target.closest("[data-apply1]"); if(a1) return applySwaps([R.singles[+a1.dataset.apply1]]);
   const a2 = e.target.closest("[data-apply2]"); if(a2) return applySwaps(R.pairs[+a2.dataset.apply2].swaps);
 });
