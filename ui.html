@@ -105,7 +105,7 @@ dialog::backdrop{background:#000a}
           <label class="f">Manager league<select id="mLeague"></select></label>
         </div>
         <label class="chk" style="margin-top:6px"><input type="checkbox" id="mFree" checked> I can change the manager's league (League Modifier item) — choose the best one for me</label>
-        <div class="small mut" style="margin-top:4px">A manager gives +1 chem to each player sharing his nation or league (max +1 per player). The nation is fixed by the manager card; the league can be changed with an item.</div>
+        <div class="small mut" style="margin-top:4px">The manager counts like one more player of their nation and league (no club), so they help everyone's links the same way a squad player does. The nation is fixed by the manager card; the league can be changed with an item.</div>
         <div class="small" id="mInfo" style="margin-top:4px"></div>
       </div>
       <div class="sec">
@@ -328,7 +328,7 @@ function renderPitch(){
       if(!c){ body = `<div class="card empty" data-pick="${i}">+ add player</div>`; }
       else{
         const off = ev && !ev.inpos;
-        const tip = ev && ev.inpos && !ev.full ? `club ${ev.club[0]} → +${ev.club[1]} · league ${ev.league[0]} → +${ev.league[1]} · nation ${ev.nation[0]} → +${ev.nation[1]} · manager +${ev.mgr}` : (ev&&ev.full?"full chemistry card":"");
+        const tip = ev && ev.inpos && !ev.full ? `club ${ev.club[0]} → +${ev.club[1]} · league ${ev.league[0]} → +${ev.league[1]} · nation ${ev.nation[0]} → +${ev.nation[1]} (counts include the manager)` : (ev&&ev.full?"full chemistry card":"");
         body = `<div class="card ${off?"off":""}" data-pick="${i}" draggable="true" title="${esc(tip)}">
           <div class="nm"><span class="ov">${c.ov}</span> ${esc(c.n)}<span class="tag">${esc(c.p)}</span>${typeTag(c)?`<span class="tag">${typeTag(c)}</span>`:""}</div>
           <div class="ln">${esc(c.nn)}</div><div class="ln">${esc(c.ln)}</div><div class="ln">${esc(c.cn||"–")}</div>
