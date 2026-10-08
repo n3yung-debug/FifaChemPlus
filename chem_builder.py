@@ -737,6 +737,8 @@ class Handler(BaseHTTPRequestHandler):
                 return self._send(200, eng.evaluate(body["slots"], body["squad"], body.get("mgr")))
             if self.path == "/api/optimize":
                 return self._send(200, self.optimize(body))
+            if self.path == "/api/combos":
+                return self._send(200, self.combos(body))
             if self.path == "/api/import_preview":
                 mode = body.get("mode")
                 if mode == "fgg":
@@ -766,33 +768,53 @@ class Handler(BaseHTTPRequestHandler):
 
     @staticmethod
     def optimize(b):
-        slots, squad, locks, mgr = b["slots"], b["squad"], b["locks"], b.get("mgr")
-        if any(c is None for c in squad):
-            raise ValueError("Fill all 11 slots first.")
-        o = b.get("opts", {})
+        slots, squad, locks, mgr, o, by_pos, ok, budget, bad_prices, pool, unmatched = _search_setup(b)
         max_drop, min_rating = int(o.get("max_drop", 3)), int(o.get("min_rating", 0))
-        pool, unmatched = build_pool(o)
-        by_pos = eng.index_pool(pool)
-        budget, bad_prices, ok = None, [], None
-        cap = int(o.get("max_price") or 0)
-        if cap > 0 and not (o.get("club_list") or "").strip():   # cards you own cost nothing -> no budget then
-            manual, bad_prices = manual_prices(o.get("price_list"))
-            budget = Budget(cap, manual, bool(o.get("include_unknown")), live=o.get("live_prices", True))
-            ok = budget.ok
         base, singles, allr = eng.top_singles(slots, squad, locks, mgr, by_pos, max_drop, min_rating, n=30, ok=ok)
         pairs = []
-        if o.get("pairs", True):
+        if o.get("pairs", False):
             pairs = eng.synergy_pairs(slots, squad, locks, mgr, by_pos, allr, base, max_drop, min_rating, n=15, ok=ok)
         chain, chain_total, final = eng.plan_chain(slots, squad, locks, mgr, by_pos, max_drop, min_rating,
                                                    max_steps=int(o.get("max_steps", 5)), ok=ok)
-        return {"budget": budget.report() if budget else None, "bad_prices": bad_prices,"base": base, "singles": singles, "pairs": pairs, "chain": chain,
+        combos = Handler.combos(b, setup=(slots, squad, locks, mgr, o, by_pos, ok)) if o.get("combos", True) else None
+        return {"budget": budget.report() if budget else None, "bad_prices": bad_prices, "base": base,
+                "singles": singles, "pairs": pairs, "chain": chain, "combos": combos,
                 "chain_total": chain_total, "pool": len(pool), "unmatched": unmatched,
                 "mgr_now": {"li": eng.evaluate(slots, squad, mgr)["mgr_li"],
                             **eng.manager_options(slots, squad, mgr)},
                 "mgr_after": {"li": eng.evaluate(slots, final, mgr)["mgr_li"],
                               **eng.manager_options(slots, final, mgr)},
-                "mgr_suggest": eng.manager_suggestions(slots, squad, mgr),
+                "mgr_suggest": eng.manager_suggestions(slots, squad, mgr, top=15),
                 "mgr_suggest_after": eng.manager_suggestions(slots, final, mgr)}
+
+    @staticmethod
+    def combos(b, setup=None):
+        """Best 1..K-player swap combos; with opts.combo_mgr also tries the best manager changes alongside."""
+        slots, squad, locks, mgr, o, by_pos, ok = setup or _search_setup(b)[:7]
+        k_max = max(1, min(5, int(o.get("max_steps", 5))))
+        cfg = None
+        if o.get("combo_mgr"):
+            cfg = [{k: m[k] for k in ("ni", "nn", "li", "ln", "nation", "league")}
+                   for m in eng.manager_suggestions(slots, squad, mgr, top=3)]
+        res = eng.k_swap_combos(slots, squad, locks, mgr, by_pos, int(o.get("max_drop", 3)), int(o.get("min_rating", 0)),
+                                k_max=k_max, n=25, ok=ok, mgr_configs=cfg)
+        return {"with_mgr": bool(o.get("combo_mgr")), "k_max": k_max, "by_k": {str(k): v for k, v in res.items()}}
+
+
+def _search_setup(b):
+    slots, squad, locks, mgr = b["slots"], b["squad"], b["locks"], b.get("mgr")
+    if any(c is None for c in squad):
+        raise ValueError("Fill all 11 slots first.")
+    o = b.get("opts", {})
+    pool, unmatched = build_pool(o)
+    by_pos = eng.index_pool(pool)
+    budget, bad_prices, ok = None, [], None
+    cap = int(o.get("max_price") or 0)
+    if cap > 0 and not (o.get("club_list") or "").strip():   # cards you own cost nothing -> no budget then
+        manual, bad_prices = manual_prices(o.get("price_list"))
+        budget = Budget(cap, manual, bool(o.get("include_unknown")), live=o.get("live_prices", True))
+        ok = budget.ok
+    return slots, squad, locks, mgr, o, by_pos, ok, budget, bad_prices, pool, unmatched
 
 
 class Life:

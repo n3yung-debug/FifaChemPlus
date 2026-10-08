@@ -27,7 +27,8 @@ If something goes wrong, run **start_console.bat** instead (it shows the message
 - EA's FC Community API (the official club import used by FUTBIN, FUT.GG and FUTWIZ) is only open to those approved sites, so this tool goes through them and never logs in to EA.
 - 🔒 locks a slot: it is never swapped, but still counts for everyone else's links.
 - Results are ranked by chemistry gained, then the highest overall of the incoming card. A FUT.GG score is shown only when the feed provides one (it is empty for FC 27 so far) and is never used for ranking.
-- "Find chemistry upgrades" gives manager changes (new manager nation, League Modifier, or both, each with Apply), a step-by-step plan, ranked single swaps, and two-swap combos.
+- "Find chemistry upgrades" opens a results view with a **Show** menu: the best step-by-step plan, manager change only (new manager nation, League Modifier, or both), and the best 1-, 2-, 3-, 4- and 5-player swaps (up to "Max swaps", 25 options each). Tick **allow a manager change too** to see swap combos that include a manager change. Every option has Apply (undoable).
+- Swap lists only show combos where every swap is needed (undo any one and chemistry drops), and collapse different versions of the same players. 2+ swap lists come from a beam search, so they are very good but not guaranteed to be the absolute best; with a manager change they try the 3 best manager options for your current squad.
 - Every suggested card shows its face stats (PAC SHO PAS DRI DEF PHY, or the GK six) and a link to its exact FUT.GG page, where you can check the live price in your browser. The picker shows the same.
 - Type the squad chemistry your game shows into "game shows" — the tool tells you if its rules agree.
 - "Only use cards I own": paste card names (one per line, optional rating: `Alisson 87`) to restrict the pool.
@@ -50,7 +51,7 @@ If something goes wrong, run **start_console.bat** instead (it shows the message
 - FUT.GG's JSON feed is undocumented and could change; FUTBIN blocked automated access in testing, so it is not implemented.
 - Price is not included (the feed had no usable prices). Formations come from FUT.GG's data and match FIFPlay's FC 27 list; not checked against EA's in-game screen directly.
 - Evolved cards missing from the cache: use "also search FUT.GG live" in the picker, or add a custom card.
-- Two-swap combos and the plan are heuristic searches (single swaps are exhaustive).
+- The plan and the 2+ swap lists are heuristic searches (single swaps are exhaustive).
 - `python test_engine.py` runs the rule tests.
 
 ## Troubleshooting "failed to fetch players"

@@ -326,3 +326,103 @@ def plan_chain(slots, squad, locks, mgr, by_pos, max_drop=3, min_rating=0, max_s
         total = best["total"]
         steps.append({"swaps": best["swaps"], "total": total})
     return steps, total, cur
+
+
+def _shortlist(slots, squad, locks, mgr, by_pos, max_drop, min_rating, allsingles, per_slot, ok=None):
+    """Per unlocked slot: the best single swaps plus the cards with the most link potential
+    (same club/league/nation as the rest of the squad, manager, ICONs)."""
+    single_d = {(r["slot"], r["in"]["s"]): r["d"] for r in allsingles}
+    mg = mgr or {}
+    leagues = Counter(c["li"] for c in squad if c)
+    nations = Counter(c["ni"] for c in squad if c)
+    out = {}
+    for i, cur in enumerate(squad):
+        if locks[i] or cur is None:
+            continue
+        clubs = Counter(c["ck"] for j, c in enumerate(squad) if c and c.get("ck") and j != i)
+        cands = [c for c in _slot_candidates(i, slots, squad, by_pos, max_drop, min_rating)]
+
+        def potential(c):
+            return (leagues[c["li"]] + nations[c["ni"]] + 2 * clubs.get(c.get("ck"), 0)
+                    + (0 if mg.get("li_free") else (1 if c["li"] == mg.get("li") else 0))
+                    + (1 if c["ni"] == mg.get("ni") else 0) + (3 if c.get("ty") == "icon" else 0))
+        by_pot = sorted(cands, key=lambda c: (potential(c), c["ov"]), reverse=True)
+        by_single = sorted(cands, key=lambda c: (single_d.get((i, c["s"]), -99), c["ov"]), reverse=True)
+        seen, merged = set(), []
+        for c in by_single[:per_slot] + by_pot[:per_slot]:
+            if c["s"] not in seen and (ok is None or ok(c)):
+                seen.add(c["s"])
+                merged.append(c)
+        out[i] = merged
+    return out
+
+
+def k_swap_combos(slots, squad, locks, mgr, by_pos, max_drop=3, min_rating=0, k_max=3, n=25,
+                  beam=20, per_slot=15, ok=None, mgr_configs=None):
+    """Best squads reachable with exactly 1..k_max swaps (beam search; k=1 is exhaustive over the shortlist).
+    Every swap in a listed combo is needed: dropping any one of them loses chemistry.
+    mgr_configs: extra manager settings to try (manager change + swaps); each result says which it used.
+    Returns {k: [ {swaps, total, d, dr, mgr} ]}."""
+    base = total_only(slots, squad, mgr)
+    configs = [(None, mgr)] + [(c, dict(mgr or {}, **{k: v for k, v in c.items() if k in ("ni", "li")}))
+                               for c in (mgr_configs or [])]
+    best = {}  # (k, swap key) -> result
+    for label, m in configs:
+        _, allr = single_swaps(slots, squad, locks, m, by_pos, max_drop, min_rating)
+        sl = _shortlist(slots, squad, locks, m, by_pos, max_drop, min_rating, allr, per_slot, ok)
+        frontier = [((), list(squad))]
+        for k in range(1, k_max + 1):
+            nxt = {}
+            for swaps, sq in frontier:
+                used = {s for s, _ in swaps}
+                bps = {c["bp"] for c in sq if c}
+                for i, cands in sl.items():
+                    if i in used:
+                        continue
+                    for c in cands:
+                        if c["bp"] in bps:
+                            continue
+                        key = tuple(sorted(swaps + ((i, c["s"]),)))
+                        if key in nxt:
+                            continue
+                        new = list(sq)
+                        new[i] = c
+                        nxt[key] = (total_only(slots, new, m), new)
+            ranked = sorted(nxt.items(), key=lambda kv: (-kv[1][0], -sum(c["ov"] for c in kv[1][1] if c)))
+            for key, (t, sq) in ranked:
+                if t <= base:
+                    break
+                prev = best.get((k, key))
+                if prev and prev["total"] >= t:
+                    continue
+                best[(k, key)] = {"key": key, "sq": sq, "total": t, "m": m, "label": label}
+            frontier = [(key, sq) for key, (t, sq) in ranked[:beam]]
+    out = {}
+    for (k, key), r in best.items():
+        out.setdefault(k, []).append(r)
+    res = {}
+    for k, rs in out.items():
+        rs.sort(key=lambda r: (-r["total"], r["label"] is not None, -sum(c["ov"] for c in r["sq"] if c)))
+        keep, seen = [], set()
+        for r in rs:
+            if len(keep) >= n:
+                break
+            players = tuple(sorted((s, r["sq"][s]["bp"]) for s, _ in r["key"]))
+            if players in seen:  # same players in other card versions: keep the best-ranked one
+                continue
+            seen.add(players)
+            # every swap must matter: undoing any single one of them must lose chemistry
+            needed = True
+            for slot, _ in r["key"]:
+                back = list(r["sq"])
+                back[slot] = squad[slot]
+                if total_only(slots, back, r["m"]) >= r["total"]:
+                    needed = False
+                    break
+            if not needed:
+                continue
+            swaps = [{"slot": s, "out": squad[s], "in": r["sq"][s]} for s, _ in r["key"]]
+            keep.append({"swaps": swaps, "total": r["total"], "d": r["total"] - base,
+                         "dr": sum(w["in"]["ov"] - w["out"]["ov"] for w in swaps), "mgr": r["label"]})
+        res[k] = keep
+    return {k: res.get(k, []) for k in range(1, k_max + 1)}

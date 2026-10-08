@@ -184,6 +184,19 @@ def test_manager_suggestions_cover_nation_and_league():
     assert eng.manager_suggestions(SLOTS, sq, {"ni": 5, "li": 9, "li_free": False}) == []  # already best
 
 
+def test_k_swap_combos_finds_pair_that_only_works_together():
+    # everyone isolated; two candidates from a new nation 70 only link with each other (nation 2 -> +1 each)
+    sq = squad_of(ni=list(range(11)), li=list(range(11)), ck=[None] * 11, ov=80)
+    pool = [card(100, "ST", ni=70, li=50, ov=80), card(101, "CAM", ni=70, li=51, ov=80), card(102, "CM", ni=71, li=52, ov=80)]
+    res = eng.k_swap_combos(SLOTS, sq, [False] * 11, None, eng.index_pool(pool), max_drop=0, k_max=3)
+    assert res[1] == []  # no single swap helps
+    pair = res[2][0]
+    assert {w["in"]["s"] for w in pair["swaps"]} == {"t100", "t101"} and pair["d"] == 2
+    assert res[3] == []  # a third swap adds nothing, so no 3-swap combo is listed
+    locked = eng.k_swap_combos(SLOTS, sq, [True, True] + [False] * 9, None, eng.index_pool(pool), max_drop=0, k_max=2)
+    assert locked[2] == []  # both ST slots locked, so the pair is impossible
+
+
 def test_parse_line():
     assert cb.parse_line("1. ST Mbappe 91")["name"] == "Mbappe"
     p = cb.parse_line("Mbappe 91 ST")
