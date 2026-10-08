@@ -14,7 +14,10 @@ RULES (sources checked 8 Oct 2026, see README):
   * every starter earns 0-3 chem, squad max 33
   * thresholds (counts include the player): club 2/4/7, league 3/5/8, nation 2/5/8
   * the three link types add together, capped at 3
-  * manager: flat +1 if manager shares the player's nation OR league (max +1)
+  * manager: counts as one more member of its nation and of its league toward those thresholds
+    (it lifts a player only when that crosses a threshold). Guides describe a flat "+1 if nation or
+    league matches", but a real FC 27 squad (8 Oct 2026) only adds up under the threshold rule: a
+    Spain/Arkema player with Spain 4->5 and Arkema 2->3 showed 3 chem in game, the flat rule gives 2.
   * the manager's LEAGUE can be changed with a League Modifier item (permanent, any league);
     there is no item for the manager's nation -> mgr = {"ni": nation id, "li": league id,
     "li_free": True} lets the engine pick the best league automatically
@@ -56,8 +59,9 @@ def _counts(slots, squad):
     return inpos, club, lg, nat, gl, gn
 
 
-def _raw(slots, squad):
-    """Per-player chemistry BEFORE the manager point. None = empty slot."""
+def _raw(slots, squad, mni=None, mli=None):
+    """Per-player chemistry; mni/mli = manager nation/league, each counted as one more member of that
+    nation/league toward the thresholds. None = empty slot."""
     inpos, club, lg, nat, gl, gn = _counts(slots, squad)
     rows = []
     for i, c in enumerate(squad):
@@ -69,43 +73,42 @@ def _raw(slots, squad):
             rows.append({"state": "full", "raw": 3})
         else:
             cc = club[c["ck"]] if c.get("ck") else 0
-            lc, nc = lg[c["li"]] + gl, nat[c["ni"]] + gn
+            lc = lg[c["li"]] + gl + (1 if mli is not None and c["li"] == mli else 0)
+            nc = nat[c["ni"]] + gn + (1 if mni is not None and c["ni"] == mni else 0)
             cp = pts(cc, CLUB_T) if c.get("ck") else 0
             lp, np_ = pts(lc, LEAGUE_T), pts(nc, NATION_T)
-            rows.append({"state": "ok", "raw": cp + lp + np_, "club": [cc, cp], "league": [lc, lp],
+            rows.append({"state": "ok", "raw": min(3, cp + lp + np_), "club": [cc, cp], "league": [lc, lp],
                          "nation": [nc, np_]})
     return rows
 
 
-def _manager(squad, rows, mgr):
-    """Resolve the manager point per player. Returns (list of 0/1, league id used)."""
+def _best_league(squad, rows):
+    """League Modifier: the league whose extra member adds the most chemistry (rows computed without a
+    manager league). None if no league adds anything; ties go to the lowest league id."""
+    gain = Counter()
+    for c, r in zip(squad, rows):
+        if r and r["state"] == "ok" and r["raw"] < 3:
+            up = min(3, r["club"][1] + pts(r["league"][0] + 1, LEAGUE_T) + r["nation"][1])
+            gain[c["li"]] += up - r["raw"]
+    best = max(gain.values(), default=0)
+    return min(k for k, v in gain.items() if v == best) if best > 0 else None
+
+
+def _manager_rows(slots, squad, mgr):
+    """Rows with the manager applied. Returns (rows, manager league used)."""
     mgr = mgr or {}
     ni, li = mgr.get("ni"), mgr.get("li")
-    nat_hit = [bool(r and r["state"] == "ok" and ni is not None and c["ni"] == ni)
-               for c, r in zip(squad, rows)]
     if mgr.get("li_free"):
-        # best league = the one that lifts the most players still below 3 who the nation didn't already lift
-        gain = Counter()
-        for c, r, nh in zip(squad, rows, nat_hit):
-            if r and r["state"] == "ok" and not nh and r["raw"] < 3:
-                gain[c["li"]] += 1
-        li = None
-        if gain:
-            best = max(gain.values())
-            li = min(k for k, v in gain.items() if v == best)
-    mp = []
-    for c, r, nh in zip(squad, rows, nat_hit):
-        hit = bool(r and r["state"] == "ok" and (nh or (li is not None and c["li"] == li)))
-        mp.append(1 if hit else 0)
-    return mp, li
+        li = _best_league(squad, _raw(slots, squad, ni, None))
+    return _raw(slots, squad, ni, li), li
 
 
 def evaluate(slots, squad, mgr):
     """Full breakdown. squad: list of card-or-None aligned with slots."""
-    rows = _raw(slots, squad)
-    mp, mli = _manager(squad, rows, mgr)
+    rows, mli = _manager_rows(slots, squad, mgr)
+    bare = _raw(slots, squad)
     players, total = [], 0
-    for r, m in zip(rows, mp):
+    for r, r0 in zip(rows, bare):
         if r is None:
             players.append(None)
         elif r["state"] == "off":
@@ -114,22 +117,15 @@ def evaluate(slots, squad, mgr):
             total += 3
             players.append({"chem": 3, "inpos": True, "full": True})
         else:
-            chem = min(3, r["raw"] + m)
-            total += chem
-            players.append({"chem": chem, "inpos": True, "full": False, "club": r["club"],
-                            "league": r["league"], "nation": r["nation"], "mgr": m})
+            total += r["raw"]
+            players.append({"chem": r["raw"], "inpos": True, "full": False, "club": r["club"],
+                            "league": r["league"], "nation": r["nation"], "mgr": r["raw"] - r0["raw"]})
     return {"total": total, "players": players, "mgr_li": mli}
 
 
 def total_only(slots, squad, mgr):
-    rows = _raw(slots, squad)
-    mp, _ = _manager(squad, rows, mgr)
-    total = 0
-    for r, m in zip(rows, mp):
-        if r is None or r["state"] == "off":
-            continue
-        total += 3 if r["state"] == "full" else min(3, r["raw"] + m)
-    return total
+    rows, _ = _manager_rows(slots, squad, mgr)
+    return sum(r["raw"] for r in rows if r is not None)
 
 
 def manager_options(slots, squad, mgr, top=8):

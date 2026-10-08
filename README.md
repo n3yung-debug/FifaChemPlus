@@ -40,7 +40,7 @@ If something goes wrong, run **start_console.bat** instead (it shows the message
 
 ## Rules implemented (checked 8 Oct 2026 against community guides; no EA primary source found)
 - 0–3 chem per starter, max 33. Counts include the player. Club 2/4/7, league 3/5/8, nation 2/5/8; types add, capped at 3.
-- Manager: flat +1 for sharing the player's nation or league (max +1). The league can be changed with a League Modifier item; the nation cannot.
+- Manager: counts as one more player of its nation and of its league toward those thresholds (so it only helps when that crosses a threshold). Guides describe a flat "+1 if nation or league matches", but a real FC 27 squad checked on 8 Oct 2026 (25/33 in game) only adds up under the threshold rule; it is a test in test_engine.py. The league can be changed with a League Modifier item; the nation cannot.
 - Must be in a preferred position (main + alternate) to earn chem or count for others.
 - FC 27: ICON = full chem, +1 nation, +1 to every league. Hero / Hall of FUT = full chem, +1 league, +1 nation. None of them have a club link.
 - Men's and women's players link through affiliated clubs, not leagues.

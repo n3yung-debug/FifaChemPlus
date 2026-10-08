@@ -38,11 +38,27 @@ def test_zero_when_nothing_links():
     assert eng.evaluate(SLOTS, sq, None)["total"] == 0
 
 
-def test_manager_flat_plus_one_max():
+def test_manager_counts_toward_thresholds():
     sq = squad_of(ni=list(range(11)), li=list(range(11)), ck=[None] * 11)
-    # manager matches nation AND league of player 0 -> still only +1
+    # a lone player: manager makes nation count 2 (+1) and league count 2 (still 0)
     ev = eng.evaluate(SLOTS, sq, {"ni": 0, "li": 0})
     assert ev["players"][0]["chem"] == 1 and ev["total"] == 1
+    # nation already on 1 point (count 2): manager -> count 3, no new threshold, so no gain
+    sq = squad_of(ni=[5, 5] + list(range(20, 29)), li=list(range(11)), ck=[None] * 11)
+    assert eng.evaluate(SLOTS, sq, {"ni": 5})["total"] == eng.evaluate(SLOTS, sq, None)["total"] == 2
+
+
+def test_real_fc27_squad_matches_game():
+    # User's in-game squad, 8 Oct 2026: 4-1-2-1-2 (2), manager Spain + Arkema Premiere Ligue, game shows 25/33.
+    # Per-player badges read off the screenshot: Salma 3 (the flat "+1" rule gave her 2 -> 24).
+    slots = ["GK", "RB", "CB", "CB", "LB", "CDM", "CM", "CM", "CAM", "ST", "ST"]
+    spec = [("GK", "BR", "PL", "LIV"), ("RB", "ES", "LL", "ATM"), ("CB", "FR", "LL", "RMA"), ("CB", "ES", "LL", "BAR"),
+            ("LB", "PT", "LL", "BAR"), ("CDM", "EN", "WSL", "ARS"), ("CM", "FR", "ARK", "PSG"), ("CM", "ES", "LIGAF", "BAR"),
+            ("CAM", "BR", "NWSL", "KCC"), ("ST", "ES", "ARK", "OL"), ("ST", "BR", "LL", "RMA")]
+    sq = [card(i, p, ni=n, li=l, ck=k) for i, (p, n, l, k) in enumerate(spec)]
+    ev = eng.evaluate(slots, sq, {"ni": "ES", "li": "ARK", "li_free": False})
+    assert [p["chem"] for p in ev["players"]] == [1, 3, 3, 3, 3, 0, 2, 3, 1, 3, 3]
+    assert ev["total"] == 25
 
 
 def test_off_position_gets_zero_and_does_not_count():
@@ -147,13 +163,13 @@ def test_manager_free_league_picks_best():
     ev = eng.evaluate(SLOTS, sq, {"ni": 99, "li": None, "li_free": True})
     assert ev["mgr_li"] == 7 and ev["players"][0]["chem"] == 1 and ev["players"][1]["chem"] == 1
     ev2 = eng.evaluate(SLOTS, sq, {"ni": 99, "li": 20, "li_free": False})
-    assert ev2["total"] == 1  # fixed league 20 only lifts one player
+    assert ev2["total"] == 0  # fixed league 20: a lone player + manager = 2, below the 3 needed
 
 
 def test_manager_nation_options():
-    sq = squad_of(ni=[5, 5] + list(range(20, 29)), li=list(range(11)), ck=[None] * 11)
+    sq = squad_of(ni=[5] * 4 + list(range(20, 27)), li=list(range(11)), ck=[None] * 11)
     o = eng.manager_options(SLOTS, sq, {"ni": None, "li": None, "li_free": False})
-    assert o["options"][0]["ni"] == 5 and o["options"][0]["d"] == 2
+    assert o["options"][0]["ni"] == 5 and o["options"][0]["d"] == 4  # Spain-style 4 -> 5: each of 4 goes 1 -> 2
 
 
 def test_parse_line():
