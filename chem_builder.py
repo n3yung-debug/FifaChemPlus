@@ -495,7 +495,9 @@ class Budget:
 def build_pool(opts):
     gender = int(opts.get("gender") or 0)
     excl = set(opts.get("exclude_types") or [])
-    pool = [c for c in STATE["cards"] if (not gender or c["g"] == gender) and c["ty"] not in excl]
+    banned = {str(x) for x in opts.get("blacklist") or []}  # base player ids: every version of the player
+    pool = [c for c in STATE["cards"] if (not gender or c["g"] == gender) and c["ty"] not in excl
+            and str(c["bp"]) not in banned]
     unmatched = []
     lines = [ln for ln in (opts.get("club_list") or "").splitlines() if ln.strip()]
     if lines:
@@ -511,7 +513,8 @@ def build_pool(opts):
                 unmatched.append(ln.strip())
             for c in found:
                 chosen[c["s"]] = c
-        pool = [c for c in chosen.values() if (not gender or c["g"] == gender) and c["ty"] not in excl]
+        pool = [c for c in chosen.values() if (not gender or c["g"] == gender) and c["ty"] not in excl
+                and str(c["bp"]) not in banned]
     return pool, unmatched
 
 

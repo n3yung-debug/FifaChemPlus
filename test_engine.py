@@ -197,6 +197,20 @@ def test_k_swap_combos_finds_pair_that_only_works_together():
     assert locked[2] == []  # both ST slots locked, so the pair is impossible
 
 
+def test_blacklist_removes_every_version_of_a_player():
+    cb.load_cache()
+    pool, _ = cb.build_pool({})
+    assert any(c["bp"] == 231747 for c in pool) and sum(c["bp"] == 231747 for c in pool) > 1  # several Mbappé cards
+    pool, _ = cb.build_pool({"blacklist": [231747]})
+    assert not any(c["bp"] == 231747 for c in pool)
+    pool, _ = cb.build_pool({"blacklist": ["231747"], "club_list": "Mbappe\nAlisson"})  # also within "cards I own"
+    assert [c["n"] for c in pool] == ["Alisson"]
+    r = cb.Handler.optimize(_opt_body(blacklist=[c["bp"] for c in cb.STATE["cards"] if c["ty"] == "icon"][:400]))
+    incoming = {w["in"]["bp"] for k in r["combos"]["by_k"].values() for x in k for w in x["swaps"]}
+    banned = {c["bp"] for c in cb.STATE["cards"] if c["ty"] == "icon"}
+    assert incoming and not incoming & banned
+
+
 def test_parse_line():
     assert cb.parse_line("1. ST Mbappe 91")["name"] == "Mbappe"
     p = cb.parse_line("Mbappe 91 ST")

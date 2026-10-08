@@ -127,6 +127,10 @@ a.ext{color:var(--acc);font-size:12px;text-decoration:none;margin-left:6px} a.ex
           <label class="chk"><input type="checkbox" id="xHero"> exclude Heroes</label>
           <label class="chk"><input type="checkbox" id="xHof"> exclude Hall of FUT</label>
         </div>
+        <details style="margin-top:8px" id="blDet"><summary class="small mut" id="blSum">Blacklisted players (0)</summary>
+          <div class="small mut" style="margin-top:4px">Never suggested, in any card version. Add one with the 🚫 next to a suggestion or a search result. Players already in your squad stay where they are.</div>
+          <div id="blList" style="margin-top:6px;display:flex;flex-wrap:wrap;gap:6px"></div>
+        </details>
         <details style="margin-top:8px"><summary class="small mut">Only use cards I own (optional)</summary>
           <textarea id="clubList" rows="5" style="width:100%;margin-top:6px" placeholder="One card per line: name, or name + rating (e.g. Alisson 87). Rows copied from a club list (FUTBIN My Club, FUT.GG) also work. Leave empty to search every card in the database."></textarea>
         </details>
@@ -203,7 +207,17 @@ a.ext{color:var(--acc);font-size:12px;text-decoration:none;margin-left:6px} a.ex
 const POS = ["GK","LB","CB","RB","CDM","CM","CAM","LM","RM","LW","ST","RW"];
 const DEFAULT_FORMATION = "4-1-2-1-2 (2)";
 const LEGACY_NAMES = {"4-3-3 (holding)":"4-3-3 (2)"};  // v1 preset that isn't an FC 27 formation name
-const KEY = "chemBuilder.v2", KEY_V1 = "chemBuilder.v1", KEY_SAVED = "chemBuilder.saved";
+const KEY = "chemBuilder.v2", KEY_V1 = "chemBuilder.v1", KEY_SAVED = "chemBuilder.saved", KEY_BL = "chemBuilder.blacklist";
+let BL = [];   // [{bp, n}] players never to suggest (every version)
+try{ BL = JSON.parse(localStorage.getItem(KEY_BL) || "[]") || []; }catch(e){ BL = []; }
+function saveBL(){ try{ localStorage.setItem(KEY_BL, JSON.stringify(BL)); }catch(e){} renderBL(); }
+function renderBL(){
+  $("blSum").textContent = `Blacklisted players (${BL.length})`;
+  $("blList").innerHTML = BL.length ? BL.map(x => `<span class="tag" style="font-size:12px;padding:2px 6px">${esc(x.n)} <button class="sm" data-unban="${esc(x.bp)}" title="Allow this player again" style="padding:0 5px">✕</button></span>`).join("")
+                                    : `<span class="small mut">Nobody yet.</span>`;
+}
+const isBanned = c => BL.some(x => String(x.bp) === String(c.bp));
+function ban(bp, n){ if(!BL.some(x => String(x.bp) === String(bp))){ BL.push({bp, n}); saveBL(); } }
 let FORMATIONS = {};
 const $ = id => document.getElementById(id);
 const esc = s => String(s ?? "").replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
@@ -293,7 +307,8 @@ function readOpts(){
   return {max_price:parseCoins($("maxPrice").value), include_unknown:$("incUnk").checked, price_list:$("priceList").value,
     max_drop:+$("maxDrop").value||0, min_rating:+$("minRating").value||0, gender:+$("gender").value,
     max_steps:+$("maxSteps").value||5, club_list:$("clubList").value,
-    exclude_types:[$("xIcon").checked&&"icon",$("xHero").checked&&"hero",$("xHof").checked&&"hof"].filter(Boolean)};
+    exclude_types:[$("xIcon").checked&&"icon",$("xHero").checked&&"hero",$("xHof").checked&&"hof"].filter(Boolean),
+    blacklist:BL.map(x => x.bp)};
 }
 function writeOpts(o){
   $("maxPrice").value=o.max_price?String(o.max_price):""; $("incUnk").checked=!!o.include_unknown; $("priceList").value=o.price_list||"";
@@ -403,7 +418,7 @@ function highlightSlot(i){
 }
 function hitHtml(c, k){
   const okPos = fits(c, S.slots[pickIdx]);
-  return `<div class="hit ${k===hl?"hl":""}" data-hit="${k}"><div><strong>${c.ov}</strong> ${esc(c.n)} <span class="mut">${esc(c.p)}${c.a&&c.a.length?" / "+esc(c.a.join(", ")):""}</span>${typeTag(c)?`<span class="tag">${typeTag(c)}</span>`:""}${c.live?`<span class="tag">live</span>`:""}${okPos?"":`<span class="tag" style="color:var(--bad)">off-position</span>`}<div class="small mut">${esc(c.rt)} · ${cardLine(c)}${c.g===2?" · women":""}${cardLink(c)}</div><div class="small">${faceStats(c)}</div></div></div>`;
+  return `<div class="hit ${k===hl?"hl":""}" data-hit="${k}"><div><strong>${c.ov}</strong> ${esc(c.n)} <span class="mut">${esc(c.p)}${c.a&&c.a.length?" / "+esc(c.a.join(", ")):""}</span>${typeTag(c)?`<span class="tag">${typeTag(c)}</span>`:""}${c.live?`<span class="tag">live</span>`:""}${okPos?"":`<span class="tag" style="color:var(--bad)">off-position</span>`}<div class="small mut">${esc(c.rt)} · ${cardLine(c)}${c.g===2?" · women":""}${cardLink(c)}${banBtn(c)}${isBanned(c)?` <span class="tag" style="color:var(--bad)">blacklisted</span>`:""}</div><div class="small">${faceStats(c)}</div></div></div>`;
 }
 let hitCache = [], hitQuery = "", liveError = null;
 function renderHits(){
@@ -446,9 +461,11 @@ $("pitch").addEventListener("drop", e => {
 $("pitch").addEventListener("dragend", () => { dragFrom = -1; document.querySelectorAll(".slot.dragover").forEach(x=>x.classList.remove("dragover")); });
 
 /* ---------- optimizer ---------- */
+const banBtn = c => c.bp == null || String(c.s).startsWith("custom:") ? "" :
+  ` <button class="sm ban" data-ban="${esc(c.bp)}" data-name="${esc(c.n)}" title="Blacklist: never suggest this player (any version)">🚫</button>`;
 function swapHtml(s){
   const a=s.out, b=s.in;
-  return `<div><span class="tag">${esc(S.slots[s.slot])}</span><span class="mut">${a.ov} ${esc(a.n)}</span><span class="arrow">→</span><strong>${b.ov} ${esc(b.n)}</strong>${typeTag(b)?`<span class="tag">${typeTag(b)}</span>`:""}${b.gg?`<span class="tag" title="FUT.GG score - display only, not used for ranking">GG ${b.gg}</span>`:""}${priceTag(b)}${cardLink(b)}<div class="small mut">${esc(b.rt)} · ${cardLine(b)}${b.g===2?" · women":""}</div><div class="small">${faceStats(b)}</div></div>`;
+  return `<div><span class="tag">${esc(S.slots[s.slot])}</span><span class="mut">${a.ov} ${esc(a.n)}</span><span class="arrow">→</span><strong>${b.ov} ${esc(b.n)}</strong>${typeTag(b)?`<span class="tag">${typeTag(b)}</span>`:""}${b.gg?`<span class="tag" title="FUT.GG score - display only, not used for ranking">GG ${b.gg}</span>`:""}${priceTag(b)}${cardLink(b)}${banBtn(b)}<div class="small mut">${esc(b.rt)} · ${cardLine(b)}${b.g===2?" · women":""}</div><div class="small">${faceStats(b)}</div></div>`;
 }
 function priceTag(c){
   const p = window.__R && window.__R.budget && window.__R.budget.prices && window.__R.budget.prices[c.s];
@@ -732,7 +749,7 @@ async function init(){
   syncMgrInputs();
   $("cPos").innerHTML = POS.map(p=>`<option>${p}</option>`).join("");
   $("bmLink").href = bookmarklet();
-  renderSaved(); updUndo(); refresh();
+  renderSaved(); renderBL(); updUndo(); refresh();
   if(!started){ started = true; ping(); setInterval(ping, 10000); handleHash(); }
 }
 addEventListener("hashchange", handleHash);
@@ -775,7 +792,16 @@ $("q").addEventListener("keydown", e => {
   }
 });
 $("live").onchange = doSearch;
-$("hits").addEventListener("click", e => { const h = e.target.closest("[data-hit]"); if(h) setCard(hitCache[+h.dataset.hit]); });
+$("hits").addEventListener("click", e => {
+  const bn = e.target.closest("[data-ban]");
+  if(bn){ ban(bn.dataset.ban, bn.dataset.name); renderHits(); return; }
+  const h = e.target.closest("[data-hit]"); if(h) setCard(hitCache[+h.dataset.hit]);
+});
+$("blList").addEventListener("click", e => {
+  const b = e.target.closest("[data-unban]"); if(!b) return;
+  BL = BL.filter(x => String(x.bp) !== b.dataset.unban); saveBL();
+  if(window.__R) $("goMsg").textContent = "Removed from the blacklist — run “Find chemistry upgrades” again to include them.";
+});
 $("cAdd").onclick = () => {
   const nm = $("cName").value.trim(); if(!nm){ return; }
   const nat = META.nations.find(n=>String(n[0])===$("cNat").value), lg = META.leagues.find(n=>String(n[0])===$("cLg").value), cl = META.clubs.find(n=>String(n[0])===$("cClub").value);
@@ -794,6 +820,8 @@ for(const id of ["maxDrop","minRating","gender","maxSteps","clubList","xIcon","x
 $("go").onclick = runOptimize;
 $("results").addEventListener("click", e => {
   const R = window.__R; if(!R) return;
+  const bn = e.target.closest("[data-ban]");
+  if(bn){ ban(bn.dataset.ban, bn.dataset.name); $("goMsg").textContent = `${bn.dataset.name} blacklisted — searching again…`; runOptimize(); return; }
   if(e.target.id==="applyChain"){
     const last = R.chain[R.chain.length-1];
     applySwaps(R.chain.flatMap(s=>s.swaps));

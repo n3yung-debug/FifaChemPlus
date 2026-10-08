@@ -31,6 +31,7 @@ If something goes wrong, run **start_console.bat** instead (it shows the message
 - Swap lists only show combos where every swap is needed (undo any one and chemistry drops), and collapse different versions of the same players. 2+ swap lists come from a beam search, so they are very good but not guaranteed to be the absolute best; with a new manager they try up to 12 nations from your squad and the candidate cards. The whole search takes about 2 seconds and stops expanding after 8 seconds on very slow PCs.
 - Every suggested card shows its face stats (PAC SHO PAS DRI DEF PHY, or the GK six) and a link to its exact FUT.GG page, where you can check the live price in your browser. The picker shows the same.
 - Type the squad chemistry your game shows into "game shows" — the tool tells you if its rules agree.
+- 🚫 next to any suggested card (or picker result) blacklists that player in every card version; the search re-runs without them. The list is saved in the browser under "Blacklisted players", where ✕ allows a player again. Players already in your squad are not touched.
 - "Only use cards I own": paste card names (one per line, optional rating: `Alisson 87`) to restrict the pool.
   Without it, the search covers every card in the database (ICONs included — tick "exclude ICONs" if you don't have any).
 
